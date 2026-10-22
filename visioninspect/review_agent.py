@@ -239,6 +239,19 @@ class ReviewAgent:
         ):
             raise ToolFailure("schema_error", "结束动作不得携带新的工具参数")
 
+    def silent_abstention(self, decision: ReviewDecision) -> bool:
+        """True when the model abstains despite having complete, clean evidence.
+
+        Abstention is meant for genuine conflicts or unreadable evidence. Using
+        it after every region came back normal is a default, not a judgement, so
+        the loop asks for the conclusion once before falling back to a human.
+        """
+        if decision.verdict != "unknown":
+            return False
+        if any(value != "normal" for value in self.reviewed.values()):
+            return False
+        return all(region in self.reviewed for region in self.regions)
+
     def decide(self, state: ReviewState) -> dict[str, str]:
         """Ask the model for one bounded next step, then validate the reply."""
         started = time.perf_counter()
@@ -301,6 +314,15 @@ class ReviewAgent:
                 ]
                 self.reviewed[self.current[1]] = findings[0]
             if decision.action == "finish":
+                if self.silent_abstention(decision):
+                    # Every region was checked and nothing abnormal was seen, yet
+                    # the model still abstains. Ask once for the conclusion it is
+                    # already holding instead of defaulting the case to a human.
+                    raise ToolFailure(
+                        "schema_error",
+                        "已查看全部区域且无异常观察，请给出 normal 或 anomaly 结论",
+                        retryable=True,
+                    )
                 return dict(route="finish")
             if self.calls >= self.maximum:
                 self.failure = "模型调用预算耗尽，补充检查未完成"

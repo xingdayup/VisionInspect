@@ -75,16 +75,20 @@ def decision(
     reference=None,
     finding="normal",
     local=False,
+    observed_region="R1",
 ):
     return ReviewDecision(
         observations=[
             dict(
                 text="单元测试中的可见边缘观察",
                 finding=finding,
-                evidence_ids=["region:R1", "matched:R1:1"]
+                evidence_ids=[
+                    f"region:{observed_region}",
+                    f"matched:{observed_region}:1",
+                ]
                 if local
                 else ["original", "reference:1"],
-                region_id="R1" if local else None,
+                region_id=observed_region if local else None,
             )
         ],
         action=action,
@@ -291,3 +295,43 @@ def test_context_spells_out_coverage_and_remaining_regions(tmp_path):
     third = client.inputs[2][0]
     assert third["remaining_regions"] == ["R2"]
     assert third["coverage"] == "1/2"
+
+
+def test_four_region_case_that_used_to_fail_now_concludes(tmp_path):
+    """Replay of the real failure: four normal regions, then a repeated view."""
+    report, _ = run(
+        tmp_path,
+        [
+            decision("compare_region", "unknown", "R1", 1),
+            decision("compare_region", "unknown", "R2", 1, local=True),
+            decision(
+                "compare_region", "unknown", "R3", 1, local=True, observed_region="R2"
+            ),
+            decision(
+                "compare_region", "unknown", "R4", 1, local=True, observed_region="R3"
+            ),
+            # The model re-requests R4 instead of finishing: one corrective call.
+            decision(
+                "compare_region", "unknown", "R4", 1, local=True, observed_region="R4"
+            ),
+            decision(local=True, observed_region="R4"),
+        ],
+        regions=4,
+    )
+    assert report["vlm_calls"] == 6
+    assert report["result"]["state"] == "normal_candidate"
+    assert report["agent_review"]["accepted"] is True
+
+
+def test_silent_abstention_gets_one_request_for_a_conclusion(tmp_path):
+    """A verdict of unknown on clean evidence is a default, not a judgement."""
+    report, _ = run(
+        tmp_path,
+        [
+            decision("compare_region", "unknown", "R1", 1),
+            decision("finish", "unknown", local=True),
+            decision(local=True),
+        ],
+    )
+    assert report["vlm_calls"] == 3
+    assert report["result"]["state"] == "normal_candidate"
