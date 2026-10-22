@@ -1,4 +1,13 @@
-"""Local queue, SQLite history and one supervised resident inference worker."""
+"""Local queue, SQLite history and one supervised resident inference worker.
+
+TaskStore owns everything that outlives a single request: the SQLite queue, the
+batch state machine, the resident inference process and the vLLM lease. The API
+layer never schedules work itself; it only enqueues and reads back state.
+
+Concurrency model: one dispatcher thread runs tasks strictly in order, while
+mutations take a single re-entrant lock. SQLite runs in WAL mode so readers are
+never blocked by the writer.
+"""
 
 from __future__ import annotations
 
@@ -11,9 +20,11 @@ import threading
 import time
 import traceback
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -23,11 +34,17 @@ from .schemas import FinalResult
 from .vllm_runtime import VLLMRuntime, gpu_config
 
 
-def timestamp():
+def timestamp() -> str:
+    """Return an ISO-8601 UTC timestamp used for every stored record."""
     return datetime.now(UTC).isoformat()
 
 
-def cuda_available():
+def cuda_available() -> bool:
+    """Report whether this interpreter can see a CUDA device.
+
+    Import errors are treated as 'no GPU' because a CPU-only torch build is a
+    configuration error here, not a reason to fall back to CPU inference.
+    """
     try:
         import torch
 
@@ -36,13 +53,15 @@ def cuda_available():
         return False
 
 
-def registry():
+def registry() -> dict:
+    """Read the product-to-model registry; it changes only when assets change."""
     return yaml.safe_load((ROOT / "configs/models.yaml").read_text(encoding="utf8"))[
         "models"
     ]
 
 
-def model_health():
+def model_health() -> list[dict]:
+    """Report per-model asset presence without loading any weights."""
     result = []
     for category, item in registry().items():
         for model, config in item.items():
@@ -72,7 +91,10 @@ def model_health():
 
 
 class TaskStore:
-    def __init__(self, directory: Path | None = None):
+    """Own the inspection queue, its SQLite history and both model processes."""
+
+    def __init__(self, directory: Path | None = None) -> None:
+        """Open the store, migrate the schema and start the dispatcher thread."""
         self.root = directory or project_path(
             os.environ.get("VISIONINSPECT_STATE_DIR", "outputs/service")
         )
@@ -131,7 +153,8 @@ class TaskStore:
         self.dispatcher.start()
 
     @contextmanager
-    def connect(self):
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        """Yield a short-lived connection whose block commits or rolls back as one."""
         connection = sqlite3.connect(self.database, timeout=15)
         connection.row_factory = sqlite3.Row
         try:
@@ -140,7 +163,8 @@ class TaskStore:
         finally:
             connection.close()
 
-    def directory(self, task_id):
+    def directory(self, task_id: str) -> Path:
+        """Return a task directory, rejecting anything that is not a 32-char hex id."""
         if (
             not isinstance(task_id, str)
             or len(task_id) != 32
@@ -149,7 +173,8 @@ class TaskStore:
             raise KeyError(task_id)
         return self.root / task_id
 
-    def get(self, task_id, details=True):
+    def get(self, task_id: str, details: bool = True) -> dict:
+        """Load one task, optionally attaching its progress and report files."""
         directory = self.directory(task_id)
         with self.connect() as db:
             row = db.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -181,7 +206,8 @@ class TaskStore:
         return result
 
     @staticmethod
-    def effective(task):
+    def effective(task: dict) -> dict:
+        """Resolve the result a reader should trust: human, failure, agent, baseline."""
         if task.get("review"):
             return dict(
                 state=task["review"]["decision"],
@@ -198,7 +224,15 @@ class TaskStore:
             else "baseline",
         )
 
-    def list(self, status=None, state=None, query="", limit=50, offset=0):
+    def list(
+        self,
+        status: str | None = None,
+        state: str | None = None,
+        query: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict:
+        """Return a filtered, paginated page of tasks for the history view."""
         conditions = []
         arguments = []
         for name, value in [("status", status), ("state", state)]:
@@ -224,7 +258,12 @@ class TaskStore:
             item["review"] = json.loads(item["review"]) if item["review"] else None
         return dict(items=items, total=total, limit=limit, offset=offset)
 
-    def snapshot(self, category, model):
+    def snapshot(self, category: str, model: str) -> dict:
+        """Freeze the policy, registration and profile digest at submission time.
+
+        Storing the snapshot with the task means a later config edit cannot
+        change how an already queued image is judged.
+        """
         policy = yaml.safe_load(
             (ROOT / "configs/agent.yaml").read_text(encoding="utf8")
         )
@@ -238,8 +277,20 @@ class TaskStore:
         )
 
     def create(
-        self, body, filename, category, model, mode, batch_id=None, retry_of=None
-    ):
+        self,
+        body: bytes,
+        filename: str,
+        category: str,
+        model: str,
+        mode: str,
+        batch_id: str | None = None,
+        retry_of: str | None = None,
+    ) -> dict:
+        """Persist one uploaded image and enqueue it, or stage it into a batch.
+
+        Queue depth and per-batch limits are checked inside the same transaction
+        that inserts the row, so two uploads cannot both pass a full queue.
+        """
         if mode not in {"baseline", "agent_review"}:
             raise ValueError("Only GPU baseline and agent_review are supported")
         if self.closed:
@@ -327,7 +378,12 @@ class TaskStore:
         self.wake.set()
         return self.get(task_id)
 
-    def dispatch(self):
+    def dispatch(self) -> None:
+        """Take queued tasks one at a time until shutdown.
+
+        Only one task may run at once: the CUDA detector and the vLLM server are
+        single-tenant, and serial execution keeps memory measurements meaningful.
+        """
         while not self.closed:
             selected = None
             try:
@@ -367,7 +423,8 @@ class TaskStore:
             self.wake.wait(0.2)
             self.wake.clear()
 
-    def create_batch(self, name, category, model, mode):
+    def create_batch(self, name: str, category: str, model: str, mode: str) -> dict:
+        """Create an empty draft batch; images are uploaded into it afterwards."""
         if mode not in {"baseline", "agent_review"}:
             raise ValueError("Only GPU baseline and agent_review are supported")
         batch_id = uuid.uuid4().hex
@@ -390,7 +447,12 @@ class TaskStore:
             )
         return self.get_batch(batch_id)
 
-    def get_batch(self, batch_id, details=True):
+    def get_batch(self, batch_id: str, details: bool = True) -> dict:
+        """Load a batch with per-image counts computed from the latest attempt.
+
+        Retries are linked rows, so the summary counts one image once even when
+        it was attempted several times.
+        """
         self.directory(batch_id)  # same strict identifier validation
         with self.connect() as db:
             row = db.execute("SELECT * FROM batches WHERE id=?", (batch_id,)).fetchone()
@@ -442,7 +504,8 @@ class TaskStore:
             batch.update(items=list(latest.values()), all_attempts=items)
         return batch
 
-    def list_batches(self, limit=50, offset=0):
+    def list_batches(self, limit: int = 50, offset: int = 0) -> dict:
+        """Return recent batches without their full item lists."""
         with self.connect() as db:
             ids = [
                 r["id"]
@@ -459,7 +522,12 @@ class TaskStore:
             offset=offset,
         )
 
-    def batch_action(self, batch_id, action):
+    def batch_action(self, batch_id: str, action: str) -> dict:
+        """Apply start/resume/pause/cancel, rejecting transitions that lost meaning.
+
+        Pause and cancel only affect items that have not started; the item
+        already running finishes so its evidence is not silently discarded.
+        """
         with self.mutation_lock, self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
             batch = db.execute(
@@ -517,21 +585,24 @@ class TaskStore:
         self.wake.set()
         return self.get_batch(batch_id)
 
-    def settle_batches(self):
+    def settle_batches(self) -> None:
+        """Mark batches complete once no member task is pending or running."""
         with self.connect() as db:
             db.execute(
                 "UPDATE batches SET status='completed',updated_at=? WHERE status IN ('queued','running','paused') AND NOT EXISTS (SELECT 1 FROM task_links l JOIN tasks t ON l.task_id=t.id WHERE l.batch_id=batches.id AND t.status IN ('queued','running','staged'))",
                 (timestamp(),),
             )
 
-    def record_upload_error(self, batch_id, filename, message):
+    def record_upload_error(self, batch_id: str, filename: str, message: str) -> None:
+        """Keep a rejected upload visible instead of failing the whole batch."""
         with self.connect() as db:
             db.execute(
                 "INSERT INTO batch_upload_errors VALUES (?,?,?,?)",
                 (batch_id, filename[:160], message[:500], timestamp()),
             )
 
-    def retry(self, task_id):
+    def retry(self, task_id: str) -> dict:
+        """Create a linked new attempt instead of mutating the failed one."""
         with self.mutation_lock:
             task = self.get(task_id)
             if task["status"] != "failed":
@@ -555,7 +626,8 @@ class TaskStore:
                 task_id,
             )
 
-    def update(self, task_id, **values):
+    def update(self, task_id: str, **values: Any) -> None:
+        """Update named task columns and stamp updated_at in one statement."""
         values["updated_at"] = timestamp()
         with self.connect() as db:
             db.execute(
@@ -565,7 +637,8 @@ class TaskStore:
                 list(values.values()) + [task_id],
             )
 
-    def worker_command(self, directory):
+    def worker_command(self, directory: Path) -> list[str]:
+        """Return the resident worker command, bound to this process as parent."""
         return [
             sys.executable,
             "-B",
@@ -577,8 +650,13 @@ class TaskStore:
             str(os.getpid()),
         ]
 
-    def fail(self, task_id, failure, seconds):
-        """Publish an authoritative manual-review report before exposing terminal failure."""
+    def fail(self, task_id: str, failure: str, seconds: float | None) -> None:
+        """Publish an authoritative manual-review report before exposing terminal failure.
+
+        Whatever the worker left behind is preserved as evidence, but the stored
+        result is always manual_review: an unaccepted run must never read as a
+        passing candidate.
+        """
         directory = self.directory(task_id)
         report_path = directory / "report.json"
         original = {}
@@ -663,7 +741,13 @@ class TaskStore:
             seconds=seconds,
         )
 
-    def execute(self, task_id):
+    def execute(self, task_id: str) -> None:
+        """Run one task to completion and settle its stored status.
+
+        The vLLM lease is held only while the review workflow runs, and the
+        worker reply is verified before the report is accepted. On any failure
+        the task is published as manual_review rather than being left running.
+        """
         directory = self.directory(task_id)
         started = time.perf_counter()
         self.update(task_id, status="running")
@@ -748,7 +832,8 @@ class TaskStore:
                 write_json(execution_path, execution)
             self.fail(task_id, failure, time.perf_counter() - started)
 
-    def review(self, task_id, decision, note):
+    def review(self, task_id: str, decision: str, note: str) -> dict:
+        """Append a human decision without touching the original model report."""
         task = self.get(task_id)
         if task["status"] not in ("completed", "failed"):
             raise ValueError("任务结束后才能保存复核")
@@ -766,7 +851,8 @@ class TaskStore:
             self.update(task_id, review=json.dumps(value, ensure_ascii=False))
         return value
 
-    def close(self):
+    def close(self) -> None:
+        """Stop both model processes and fail anything still marked running."""
         self.closed = True
         self.wake.set()
         self.gpu.close()
