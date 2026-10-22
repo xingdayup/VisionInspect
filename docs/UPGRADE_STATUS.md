@@ -22,6 +22,7 @@
 - 最新全量测试结果以 logs/upgrade-checks.json、upgrade-tests.xml 为准；一次完整执行为 118 passed，现有 PyTorch/Starlette 弃用及 pytest XML 属性警告如实保留。
 - 前端 TypeScript 检查及 Vite 生产构建成功。真实浏览器验证包含批次创建、两张成功上传、一张损坏文件拒绝、真实正常图推理、合成平灰图质量失败、人工记录、汇总更新和 CSV 下载；合成图仅用于工程流程，未作为模型效果数据。
 - 真实正常验证图 002.png 分数 8.26118278503418，114.png 分数 8.778727531433105；迁移前 CPU 分数与热图对比的最大热图差为 0。GPU 不可用时 114.png 转人工并保留证据，重试复用同一 CPU worker；记录在 outputs/20261022-144917-upgrade-cpu-verification-9039ef/verification.json。Windows 短暂文件共享冲突已增加有界读写重试，原失败日志保存在 logs/upgrade-cpu-share-violation.log，重新执行通过。没有重新训练、修改阈值或重跑正式测试集指标。
+- Git bundle 已在全新目录 `.cache/migration-qa/20261022-145340-2bd61878` 克隆并验证，376 个文件恢复成功；完整数据检查与迁移后真实 CPU 验证均退出 0，分数和热图保持一致。六条实际命令、退出码和日志在 logs/migration-verification.json；使用的是现有项目解释器验证 Windows 路径迁移，不冒充 Ubuntu 环境安装。
 - Bash 脚本通过 Git Bash `bash -n` 语法检查；这不等于已在 Ubuntu 安装或运行。
 - 原始交接文档、AGENT.md、checkpoint、校准与原划分不改写。Windows 路径迁移显式启用，并继续核验图像哈希和原清单身份。
 
