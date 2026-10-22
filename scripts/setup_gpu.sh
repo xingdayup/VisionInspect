@@ -9,7 +9,11 @@ if [[ -L .venv ]]; then
   exit 1
 fi
 bootstrap_python="${BOOTSTRAP_PYTHON:-/usr/local/bin/python3}"
-"$bootstrap_python" -B scripts/preflight_pai_app.py "$@" 2>&1 | tee logs/gpu-app-preflight.log
+sources=(--index-url https://pypi.org/simple --timeout 90 --retries 3)
+if [[ -n "${VISIONINSPECT_WHEELHOUSE:-}" ]]; then
+  sources=(--no-index --find-links "$VISIONINSPECT_WHEELHOUSE")
+fi
+"$bootstrap_python" -B scripts/preflight_pai_app.py "$@" --requirements requirements.txt 2>&1 | tee logs/gpu-app-preflight.log
 if [[ ! -e .venv ]]; then "$bootstrap_python" -m venv .venv; fi
 .venv/bin/python -B scripts/check_project_environment.py 2>&1 | tee logs/gpu-app-environment.log
 if ! .venv/bin/python -m pip --version > logs/gpu-app-pip-version.log 2>&1; then
@@ -25,8 +29,8 @@ match=re.search(r'^setuptools==.*?(?=^[\w-]+==|\Z)',text,re.M|re.S)
 if match is None:raise RuntimeError('Pinned setuptools build backend missing')
 Path('.tmp/build-requirements.txt').write_text(match.group(0))
 BUILD
-.venv/bin/python -m pip --isolated --cache-dir "$PIP_CACHE_DIR" install --index-url https://pypi.org/simple --timeout 90 --retries 3 --require-hashes --only-binary=:all: -r .tmp/build-requirements.txt
-.venv/bin/python -m pip --isolated --cache-dir "$PIP_CACHE_DIR" install --index-url https://pypi.org/simple --timeout 90 --retries 3 --require-hashes --only-binary=:all: --no-binary=freia --no-build-isolation -r requirements.txt 2>&1 | tee logs/gpu-app-install.log
+.venv/bin/python -m pip --isolated --cache-dir "$PIP_CACHE_DIR" install "${sources[@]}" --require-hashes --only-binary=:all: -r .tmp/build-requirements.txt
+.venv/bin/python -m pip --isolated --cache-dir "$PIP_CACHE_DIR" install "${sources[@]}" --require-hashes --only-binary=:all: --no-binary=freia --no-build-isolation -r requirements.txt 2>&1 | tee logs/gpu-app-install.log
 .venv/bin/python -m pip check 2>&1 | tee logs/gpu-app-pip-check.log
 .venv/bin/python -m pip freeze > logs/gpu-app-packages.txt
 .venv/bin/python -B - <<'CHECK'

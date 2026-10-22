@@ -50,6 +50,7 @@ def main(argv=None):
     arguments=argparse.ArgumentParser(description=__doc__)
     arguments.add_argument('--workers',type=int,choices=range(1,5),default=2)
     arguments.add_argument('--download-budget-bytes',type=int,default=1_500_000_000)
+    arguments.add_argument('--requirements',choices=['requirements.txt','requirements-vllm.txt'],default='requirements.txt')
     args=arguments.parse_args(argv)
     if args.download_budget_bytes<=0:arguments.error('Download budget must be positive')
     if sys.platform!='linux' or sys.version_info[:2]!=(3,12) or platform.machine()!='x86_64':
@@ -75,7 +76,7 @@ def main(argv=None):
             size=fetch_metadata(file['url'],method='HEAD')
         return dict(name=name,version=version,filename=file['filename'],bytes=size,url=file['url'],
                     kind='reviewed_pure_python_source' if name=='freia' else 'wheel')
-    entries=re.findall(r'^([\w-]+)==([^\s\\]+)',(ROOT/'requirements.txt').read_text(),re.M)
+    entries=re.findall(r'^([\w-]+)==([^\s\\]+)',(ROOT/args.requirements).read_text(),re.M)
     if any('+cpu' in version for _,version in entries):raise RuntimeError('CPU wheels are forbidden')
     if not entries:raise RuntimeError('No pinned dependencies found; installation stopped')
     print(f'Checking {len(entries)} pinned packages with {args.workers} workers; '
@@ -93,12 +94,13 @@ def main(argv=None):
         # Do not keep starting queued HTTP requests after a package has failed.
         pool.shutdown(wait=True,cancel_futures=True)
     files=[results[index] for index in range(len(entries))]
-    report=dict(python=sys.version,executable=sys.executable,files=files,download_bytes=sum(f['bytes'] for f in files),
+    report=dict(python=sys.version,executable=sys.executable,requirements=args.requirements,files=files,download_bytes=sum(f['bytes'] for f in files),
                 limit_bytes=args.download_budget_bytes,free_disk_bytes=shutil.disk_usage(ROOT).free,minimum_free_disk_bytes=15*1024**3,
                 packages_installed=False)
     report['passed']=report['download_bytes']<=report['limit_bytes'] and report['free_disk_bytes']>=report['minimum_free_disk_bytes']
     (ROOT/'logs').mkdir(exist_ok=True)
-    (ROOT/'logs/pai-app-preflight.json').write_text(json.dumps(report,indent=2),encoding='utf8')
+    filename='pai-app-preflight.json' if args.requirements=='requirements.txt' else 'gpu-vllm-preflight.json'
+    (ROOT/'logs'/filename).write_text(json.dumps(report,indent=2),encoding='utf8')
     print(json.dumps({k:v for k,v in report.items() if k!='files'},indent=2))
     if not report['passed']:raise RuntimeError('Application resource budget exceeded; installation stopped')
 

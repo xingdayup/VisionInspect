@@ -72,18 +72,21 @@ def inspect_metadata(data):
     return files
 
 
-def preflight(root):
+def preflight(root,minimum_free_gib=50):
     with urlopen(f'https://huggingface.co/api/models/{MODEL}/revision/{REVISION}?blobs=true',timeout=30) as response:
         body=response.read(1024**2+1)
     if len(body)>1024**2:raise ValueError('Metadata too large')
     data=json.loads(body);files=inspect_metadata(data);usage=shutil.disk_usage(root)
+    required=int(minimum_free_gib*1024**3)
+    if required<sum(f['size'] for f in files)+8*1024**3:
+        raise ValueError('Model disk budget must cover all assets plus an 8 GiB reserve')
     report=dict(model=MODEL,revision=REVISION,license='Apache-2.0',files=files,
         artifact_bytes=sum(f['size'] for f in files),free_disk_bytes=usage.free,
-        minimum_free_disk_bytes=50*1024**3,model_weights_downloaded=False,
+        minimum_free_disk_bytes=required,minimum_reserve_bytes=8*1024**3,model_weights_downloaded=False,
         budget_note='Artifact bytes, not measured network traffic; retain room for cache, environment and outputs')
     write(root/'logs/model-preflight.json',report)
     print(json.dumps({k:v for k,v in report.items() if k!='files'},indent=2),flush=True)
-    if usage.free<50*1024**3:raise RuntimeError('Less than 50 GiB free; stop before model download')
+    if usage.free<required:raise RuntimeError('Model disk budget exceeded; stop before model download')
 
 
 def verified(path,item):
@@ -113,9 +116,9 @@ def validate_source(root):
     return source
 
 
-def download(root):
+def download(root,minimum_free_gib=50):
     if not read(root/'logs/runtime-check.json').get('passed'):raise RuntimeError('Run check first')
-    preflight(root);report=read(root/'logs/model-preflight.json')
+    preflight(root,minimum_free_gib);report=read(root/'logs/model-preflight.json')
     from huggingface_hub import hf_hub_download
     directory=model_dir(root);directory.mkdir(parents=True,exist_ok=True)
     for item in report['files']:
@@ -124,6 +127,7 @@ def download(root):
             hf_hub_download(repo_id=MODEL,filename=item['rfilename'],revision=REVISION,local_dir=directory,
                             endpoint='https://huggingface.co')
         if not verified(path,item):raise ValueError(f"Checksum failed: {item['rfilename']}; retained for diagnosis")
+        if shutil.disk_usage(root).free<8*1024**3:raise RuntimeError('Model download reached the 8 GiB disk reserve')
         print('VERIFIED',item['rfilename'],item['size'],flush=True)
     write(directory/'source.json',dict(model=MODEL,revision=REVISION,license='Apache-2.0',
                                       artifact_bytes=report['artifact_bytes'],files=report['files']))
@@ -233,6 +237,7 @@ if __name__=='__main__':
     parser.add_argument('command',choices=['check','preflight','download','command','serve','probe'])
     parser.add_argument('--root',type=Path,default=Path('/mnt/systemDisk/VisionInspect-GPU'))
     parser.add_argument('--seconds',type=int,default=900);parser.add_argument('--image',type=Path)
+    parser.add_argument('--minimum-free-gib',type=int,default=50,help='Explicitly approved model disk budget; retains at least 8 GiB')
     args=parser.parse_args();root=args.root.resolve()
     if not 1<=args.seconds<=3600:parser.error('--seconds must be between 1 and 3600')
     if args.command=='probe' and args.image is None:parser.error('probe requires --image')
@@ -241,8 +246,8 @@ if __name__=='__main__':
     started=time.monotonic();error=None
     try:
         if args.command=='check':check(root)
-        elif args.command=='preflight':preflight(root)
-        elif args.command=='download':download(root)
+        elif args.command=='preflight':preflight(root,args.minimum_free_gib)
+        elif args.command=='download':download(root,args.minimum_free_gib)
         elif args.command=='command':print(json.dumps(server_command(root),ensure_ascii=False,indent=2))
         elif args.command=='serve':serve(root,args.seconds)
         elif args.command=='probe':probe(root,args.image)

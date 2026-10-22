@@ -1,0 +1,5 @@
+vllm==0.27.1
+torch==2.13.0
+torchvision==0.28.0
+transformers==5.16.1
+flashinfer-python==0.6.16.post3

@@ -83,8 +83,9 @@ def test_head_size_and_metadata_size_limit(monkeypatch):
     (1_500_000_001,16*1024**3,False),
     (123,14*1024**3,False),
 ])
-def test_completed_transport_still_enforces_resource_budgets(tmp_path,monkeypatch,wheel_bytes,free_bytes,passed):
-    (tmp_path/'requirements.txt').write_text('example==1.0\n','utf8')
+@pytest.mark.parametrize('requirements',['requirements.txt','requirements-vllm.txt'])
+def test_completed_transport_still_enforces_resource_budgets(tmp_path,monkeypatch,wheel_bytes,free_bytes,passed,requirements):
+    (tmp_path/requirements).write_text('example==1.0\n','utf8')
     monkeypatch.setattr(preflight,'ROOT',tmp_path)
     monkeypatch.setattr(preflight,'sys',SimpleNamespace(platform='linux',version_info=(3,12),
         version=sys.version,executable=sys.executable))
@@ -94,8 +95,11 @@ def test_completed_transport_still_enforces_resource_budgets(tmp_path,monkeypatc
     metadata=dict(urls=[dict(filename='example-1.0-py3-none-any.whl',size=wheel_bytes,
         url='https://files.pythonhosted.org/example-1.0-py3-none-any.whl')])
     monkeypatch.setattr(preflight,'fetch_metadata',lambda url:json.dumps(metadata).encode())
-    if passed:preflight.main([])
+    arguments=['--requirements',requirements]
+    if passed:preflight.main(arguments)
     else:
-        with pytest.raises(RuntimeError,match='resource budget exceeded'):preflight.main([])
-    report=json.loads((tmp_path/'logs/pai-app-preflight.json').read_text('utf8'))
+        with pytest.raises(RuntimeError,match='resource budget exceeded'):preflight.main(arguments)
+    name='pai-app-preflight.json' if requirements=='requirements.txt' else 'gpu-vllm-preflight.json'
+    report=json.loads((tmp_path/'logs'/name).read_text('utf8'))
+    assert report['requirements']==requirements
     assert report['passed'] is passed and not report['packages_installed']

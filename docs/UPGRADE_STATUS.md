@@ -52,3 +52,13 @@ uv pip compile requirements.in --python .venv/Scripts/python.exe --python-platfo
 服务器仍需完成：应用环境安装；真实 PatchCore CUDA 分数、热图与重载一致性；Qwen 固定权重加载、双图/三图结构化生成；真实复核分支与两个进程的 TTL；冷启动、延迟、内存和显存峰值。新入口仅使用正常验证图，不调冻结区间，不报告准确率收益；若未触发多步动作，会明确记录 `full_agent_loop_exercised: false`。
 
 历史 CPU 指标不能作为 GPU 验收。Agent 的误报/漏报收益仍需独立标注数据，不能用已见测试图调提示词、阈值或策略。当前交付是 GPU 源码改造与本机工程验证，完整 GPU 运行验收待服务器执行。
+
+## AutoDL 部署准备与预算批准
+
+用户随后提供了新服务器，并明确批准总下载上限 26 GB、模型下载前至少空闲 25 GiB、完成后至少保留 8 GiB。本次实测服务器报告 RTX 4080 SUPER / 32760 MiB 显存、16 核容器配额、约 62 GiB 内存、Python 3.12.3、平台 torch 2.12.1+cu130；CUDA 小算子通过。与此前 PAI 属于不同环境。
+
+GPU 源码提交 4440cfb 与 367 个资产文件已迁移到 `/root/autodl-tmp/VisionInspect` 并核验。新服务器没有 vLLM，不能直接复用此前 PAI 的验证结论；已增加 `requirements-vllm.txt` 与隔离安装入口。两环境冷下载约 6.85 GB，按官方文件去重约 4.03 GB；中转使用剩余字节范围，既有分片保留，传输账本不将两段流量合并成一次。
+
+服务器 PyPI 可达，Hugging Face 页面连接失败，但其官方元数据返回的 CDN 可达。没有修改系统 DNS、代理或证书，没有切换未知镜像。分发文件与权重均须匹配固定哈希后才进入安装或加载。
+
+新增预算和锁选择回归后，本机执行 `.venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --junitxml=logs/autodl-source-tests.xml`，133 passed、1 skipped、53 warnings，55.94 秒，退出 0。真实服务器的安装、模型加载与验收结果另见后续记录，不能以这些本机测试代替。

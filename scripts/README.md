@@ -7,6 +7,7 @@
 | `audit_gpu_environment.py` | 只读版本、GPU、驱动、CUDA、磁盘与小算子审计 |
 | `preflight_pai_app.py` | 固定依赖的兼容性与下载预算，TLS 校验、有界重试、进度 |
 | `setup_gpu.sh` | 项目独立 CUDA 环境、哈希锁、CUDA 运算验证 |
+| `setup_vllm.sh` | 新服务器缺少 vLLM 时，按独立哈希锁建立 GPU 环境；预算先行 |
 | `start_gpu.sh` | 校验项目环境和 CUDA 后启动单 worker Web 服务 |
 | `verify_gpu.py` | 真实正常验证图、CUDA 放置/重载/一致性，可选多图 VLM 和 TTL |
 | `pai_vllm.py` | 已有 GPU 运行时检查、权重预检、显式下载与有限调试 |

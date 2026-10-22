@@ -48,6 +48,19 @@ export VISIONINSPECT_RELOCATED_ASSETS=1
 
 应用环境使用 `.venv`。vLLM 只读复用已验证的 GPU Python，默认 `/usr/local/bin/python3`；可通过 `VISIONINSPECT_VLLM_PYTHON` 指定另一个已准备的 GPU 环境，不修改平台包。
 
+新服务器没有 vLLM 时，可先核验 `requirements-vllm.txt`：其 Linux 目标包约 3.87 GB，应用与 vLLM 冷下载合计约 6.85 GB，按文件去重约 4.03 GB。预算获批准后建立第二个独立环境：
+
+```bash
+# 指向服务器已审计的现有 Python；仅用它创建隔离环境
+export BOOTSTRAP_PYTHON=/root/miniconda3/bin/python
+export VISIONINSPECT_GPU_ROOT=/root/autodl-tmp/VisionInspect-GPU
+bash scripts/setup_gpu.sh --download-budget-bytes 3200000000
+bash scripts/setup_vllm.sh --download-budget-bytes 4100000000
+export VISIONINSPECT_VLLM_PYTHON="$VISIONINSPECT_GPU_ROOT/.venv/bin/python"
+```
+
+上述路径适用于本次 AutoDL 实例，其他服务器先审计再指定。已有校验下载目录时，两个安装脚本均支持 `VISIONINSPECT_WHEELHOUSE`，通过哈希锁从本地文件安装。环境不共享系统包，不修改 Conda base。
+
 4. 通过显式预检准备 Qwen，并验证完整 GPU 工程协议：
 
 ```bash
@@ -60,6 +73,8 @@ bash scripts/start_gpu.sh
 ```
 
 使用另一 GPU Python 时，上述 `pai_vllm.py` 命令也必须使用该解释器。GPU 根目录默认为 `/mnt/systemDisk/VisionInspect-GPU`，可用 `VISIONINSPECT_GPU_ROOT` 与 `pai_vllm.py --root` 显式指定同一目录。Web 服务默认端口 8000，使用服务器受控访问入口；Ctrl+C 停止。
+
+模型预检默认要求 50 GiB 空闲。本次用户另行批准总下载上限 26 GB、沿用现有盘、下载前至少 25 GiB、完成后至少留 8 GiB；可显式传入 `--minimum-free-gib 25`，脚本拒绝低于全部资产加 8 GiB 余量的预算。网络不通时不改系统 DNS、代理或证书，仅使用核验后的官方来源。
 
 ## 实验与数据
 
