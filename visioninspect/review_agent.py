@@ -194,8 +194,12 @@ class ReviewAgent:
                     or observation.region_id != region_id
                     or not required.issubset(observation.evidence_ids)
                 ):
+                    # Recoverable: the model cited a region it was not shown.
+                    # One bounded retry is cheaper than failing the whole review.
                     raise ToolFailure(
-                        "schema_error", "局部观察未绑定正确的待检和参考区域"
+                        "schema_error",
+                        "局部观察未绑定正确的待检和参考区域",
+                        retryable=True,
                     )
         if kind == "region":
             findings = [
