@@ -1,11 +1,16 @@
 """Read-only Linux/Python wheel and resource budget; no package installation."""
+import argparse
 import concurrent.futures
+from http.client import IncompleteRead
 import html.parser
 import json
 import platform
 import re
 import shutil
+import ssl
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -15,7 +20,37 @@ from packaging.utils import parse_wheel_filename
 ROOT=Path(__file__).resolve().parents[1]
 
 
-def main():
+def fetch_metadata(url,method='GET'):
+    """Retry transient connection AND response-body failures, keeping TLS checks."""
+    label=urllib.parse.urlsplit(url)
+    for attempt in range(1,4):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url,method=method),timeout=90) as response:
+                if method=='HEAD':return int(response.headers['Content-Length'])
+                body=response.read(8*1024**2+1)
+                if len(body)>8*1024**2:raise ValueError('Metadata response exceeds 8 MiB')
+                return body
+        except urllib.error.HTTPError as failure:
+            failure.close()
+            if failure.code not in {408,429,500,502,503,504}:raise
+            error=failure
+        except urllib.error.URLError as failure:
+            if isinstance(failure.reason,ssl.SSLCertVerificationError):raise
+            error=failure
+        except (TimeoutError,ConnectionError,IncompleteRead) as failure:
+            error=failure
+        if attempt==3:
+            raise RuntimeError(f'Metadata request failed after 3 attempts: {method} {label.hostname}{label.path}') from error
+        delay=2**attempt
+        print(f'[retry {attempt}/3] {method} {label.hostname}{label.path}: '
+              f'{type(error).__name__}; retrying in {delay}s',flush=True)
+        time.sleep(delay)
+
+
+def main(argv=None):
+    arguments=argparse.ArgumentParser(description=__doc__)
+    arguments.add_argument('--workers',type=int,choices=range(1,5),default=2)
+    args=arguments.parse_args(argv)
     if sys.platform!='linux' or sys.version_info[:2]!=(3,12) or platform.machine()!='x86_64':
         raise RuntimeError('PAI application requires Linux x86_64 and existing Python 3.12')
     tags={tag:index for index,tag in enumerate(sys_tags())}
@@ -28,11 +63,10 @@ def main():
     def inspect(item):
         name,version=item;candidates=[]
         if name in {'torch','torchvision'}:
-            with urllib.request.urlopen(f'https://download.pytorch.org/whl/cpu/{name}/',timeout=30) as response:
-                parser=Links();parser.feed(response.read(8*1024**2).decode())
+            parser=Links();parser.feed(fetch_metadata(f'https://download.pytorch.org/whl/cpu/{name}/').decode())
             files=[dict(filename=urllib.parse.unquote(url.split('/')[-1].split('#')[0]),url=url) for url in parser.links]
         else:
-            with urllib.request.urlopen(f'https://pypi.org/pypi/{name}/{version}/json',timeout=30) as response:files=json.load(response)['urls']
+            files=json.loads(fetch_metadata(f'https://pypi.org/pypi/{name}/{version}/json'))['urls']
         for file in files:
             if not file['filename'].endswith('.whl'):continue
             parsed=parse_wheel_filename(file['filename'])
@@ -43,11 +77,25 @@ def main():
         file=min(candidates,key=lambda item:item[0])[1]
         size=file.get('size')
         if size is None:
-            with urllib.request.urlopen(urllib.request.Request(file['url'],method='HEAD'),timeout=30) as response:
-                size=int(response.headers['Content-Length'])
+            size=fetch_metadata(file['url'],method='HEAD')
         return dict(name=name,version=version,filename=file['filename'],bytes=size,url=file['url'])
     entries=re.findall(r'^([\w-]+)==([^\s\\]+)',(ROOT/'requirements-agent-linux.txt').read_text(),re.M)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:files=list(pool.map(inspect,entries))
+    if not entries:raise RuntimeError('No pinned dependencies found; installation stopped')
+    print(f'Checking {len(entries)} pinned packages with {args.workers} workers; '
+          'network timeout 90s, at most 3 attempts per request',flush=True)
+    results={};pool=concurrent.futures.ThreadPoolExecutor(max_workers=args.workers)
+    futures={pool.submit(inspect,item):index for index,item in enumerate(entries)}
+    try:
+        for future in concurrent.futures.as_completed(futures):
+            index=futures[future];name,version=entries[index]
+            try:results[index]=future.result()
+            except Exception as failure:
+                raise RuntimeError(f'Preflight failed for {name}=={version}; no packages installed') from failure
+            print(f'[{len(results)}/{len(entries)}] {name}=={version}: {results[index]["bytes"]} bytes',flush=True)
+    finally:
+        # Do not keep starting queued HTTP requests after a package has failed.
+        pool.shutdown(wait=True,cancel_futures=True)
+    files=[results[index] for index in range(len(entries))]
     report=dict(python=sys.version,executable=sys.executable,files=files,download_bytes=sum(f['bytes'] for f in files),
                 limit_bytes=1_500_000_000,free_disk_bytes=shutil.disk_usage(ROOT).free,minimum_free_disk_bytes=15*1024**3,
                 packages_installed=False)
