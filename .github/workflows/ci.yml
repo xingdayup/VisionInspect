@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  style:
+    name: style + frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: python -m pip install ruff==0.14.4
+
+      - name: Python formatting
+        run: ruff format --check visioninspect tests scripts
+
+      - name: Python lint
+        run: ruff check visioninspect tests scripts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci --ignore-scripts --no-audit --no-fund
+
+      - name: Frontend formatting
+        run: npm --prefix frontend run format:check
+
+      - name: TypeScript + Vite build
+        run: npm --prefix frontend run build
+
+  tests:
+    name: pytest (locked Linux GPU wheels, no GPU device)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # CUDA wheels import without a GPU; tests that need a real device skip themselves.
+      - name: Install locked environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --require-hashes -r requirements.txt
+
+      - name: Run engineering tests
+        run: python -B -m pytest -q -p no:cacheprovider
