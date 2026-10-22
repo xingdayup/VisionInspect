@@ -57,7 +57,7 @@ export VISIONINSPECT_RELOCATED_ASSETS=1
 .venv/bin/python -B scripts/verify_gpu.py --ttl-smoke
 ```
 
-应用环境使用 `.venv`。vLLM 只读复用已验证的 GPU Python，默认 `/usr/local/bin/python3`；可通过 `VISIONINSPECT_VLLM_PYTHON` 指定另一个已准备的 GPU 环境，不修改平台包。
+应用环境使用 `.venv`。vLLM 只读复用已验证的 GPU Python，`configs/gpu.yaml` 中默认 `/usr/local/bin/python3`（PAI 路径）；AutoDL 实例由 `scripts/env_autodl.sh` 覆盖为 GPU 根目录下的独立 `.venv`。两者都不修改平台包。
 
 新服务器没有 vLLM 时，可先核验 `requirements-vllm.txt`：其 Linux 目标包约 3.87 GB，应用与 vLLM 冷下载合计约 6.85 GB，按文件去重约 4.03 GB。预算获批准后建立第二个独立环境：
 
@@ -72,18 +72,19 @@ export VISIONINSPECT_VLLM_PYTHON="$VISIONINSPECT_GPU_ROOT/.venv/bin/python"
 
 上述路径适用于本次 AutoDL 实例，其他服务器先审计再指定。已有校验下载目录时，两个安装脚本均支持 `VISIONINSPECT_WHEELHOUSE`，通过哈希锁从本地文件安装。环境不共享系统包，不修改 Conda base。
 
-4. 通过显式预检准备 Qwen，并验证完整 GPU 工程协议：
+4. 通过显式预检准备 Qwen，并验证完整 GPU 工程协议。**`check` 必须使用已安装 vLLM 的解释器**：`download` 会先读它写出的 `logs/runtime-check.json`，缺少该文件时直接报错并提示先运行 `setup_vllm.sh`。
 
 ```bash
-/usr/local/bin/python3 -B scripts/pai_vllm.py check
-/usr/local/bin/python3 -B scripts/pai_vllm.py preflight
-# 核对许可、约 17.54 GB 权重及至少 50 GiB 空间后再执行：
-/usr/local/bin/python3 -B scripts/pai_vllm.py download
+export VISIONINSPECT_VLLM_PYTHON="$VISIONINSPECT_GPU_ROOT/.venv/bin/python"
+"$VISIONINSPECT_VLLM_PYTHON" -B scripts/pai_vllm.py check --root "$VISIONINSPECT_GPU_ROOT"
+# 核对许可、约 17.54 GB 权重及空闲空间后再执行：
+"$VISIONINSPECT_VLLM_PYTHON" -B scripts/pai_vllm.py preflight --root "$VISIONINSPECT_GPU_ROOT" --minimum-free-gib 25
+"$VISIONINSPECT_VLLM_PYTHON" -B scripts/pai_vllm.py download --root "$VISIONINSPECT_GPU_ROOT" --minimum-free-gib 25
 .venv/bin/python -B scripts/verify_gpu.py --with-vlm --ttl-smoke
-bash scripts/start_gpu.sh
+PORT=6006 bash scripts/start_gpu.sh
 ```
 
-使用另一 GPU Python 时，上述 `pai_vllm.py` 命令也必须使用该解释器。GPU 根目录默认为 `/mnt/systemDisk/VisionInspect-GPU`，可用 `VISIONINSPECT_GPU_ROOT` 与 `pai_vllm.py --root` 显式指定同一目录。Web 服务默认端口 8000，使用服务器受控访问入口；Ctrl+C 停止。
+GPU 资产根目录**没有内置默认值**：优先 `--root`，其次 `VISIONINSPECT_GPU_ROOT`，两者都没有时立即报错，不会在系统盘上建出旧 PAI 路径。Web 端口由 `PORT` 决定（默认 8000），AutoDL 实例只映射 6006/6008。
 
 模型预检默认要求 50 GiB 空闲。本次用户另行批准总下载上限 26 GB、沿用现有盘、下载前至少 25 GiB、完成后至少留 8 GiB；可显式传入 `--minimum-free-gib 25`，脚本拒绝低于全部资产加 8 GiB 余量的预算。网络不通时不改系统 DNS、代理或证书，仅使用核验后的官方来源。
 
@@ -107,12 +108,19 @@ python -B -m visioninspect.baseline evaluate --run <新的GPU拟合目录>
 
 ## 验证与当前边界
 
+提交前必须全部通过；CI（`.github/workflows/ci.yml`）执行同一组命令。
+
 ```bash
+ruff format --check visioninspect tests scripts     # ruff 0.14.4
+ruff check visioninspect tests scripts
 .venv/bin/python -B -m pytest -q -p no:cacheprovider
 npm --prefix frontend ci --ignore-scripts --no-audit --no-fund
+npm --prefix frontend run format:check              # prettier 3.6.2
 npm --prefix frontend run build
 .venv/bin/python -B scripts/check_git_content.py
 ```
+
+Python 侧不引入与运行时无关的依赖：`ruff` 通过 `uvx ruff@0.14.4` 调用，不装进项目 `.venv`。代码风格约定是 ruff 默认行宽 88、isort 分组、pyupgrade 现代写法；lint 规则集为 `E4/E7/E9/F/I/UP`，脚本目录豁免 `E402`。
 
 无 CUDA 的开发机器只验证 API、队列、规则和进程协议，真实 GPU 测试会明确跳过。PAI 已由用户核实 A10、CUDA 13、vLLM 原生扩展和架构注册；应用 CUDA 安装、PatchCore GPU 数值、Qwen 权重加载、多步复核和显存峰值仍须服务器验证。最新记录见 [UPGRADE_STATUS](docs/UPGRADE_STATUS.md)。
 

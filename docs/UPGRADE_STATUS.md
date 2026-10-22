@@ -23,7 +23,7 @@ npm --prefix frontend run build
 .\.venv\Scripts\python.exe -B scripts/check_git_content.py
 ```
 
-- 工程测试：**126 passed、1 skipped、53 warnings，57.94 秒，退出 0**。日志：`logs/gpu-cleanup-tests.log` / `.xml`。覆盖 API、队列、图像校验、划分与校准、证据门控、LangGraph、TTL、环境隔离、网络重试及数据库迁移。
+- 工程测试：**126 passed、1 skipped、53 warnings，57.94 秒，退出 0**（当时基线，后续轮次的数字见文末记录）。日志：`logs/gpu-cleanup-tests.log` / `.xml`。覆盖 API、队列、图像校验、划分与校准、证据门控、LangGraph、TTL、环境隔离、网络重试及数据库迁移。
 - 唯一跳过项需要真实 CUDA，验证参数/输入/memory bank 的设备与 checkpoint 重载。API 和流程测试中的替身只验证工程行为，不构成 GPU 模型运行或效果证据。
 - TypeScript 检查与 Vite 生产构建退出 0。真实浏览器检查工作台、批次及系统页：完整导航保留，仅两种工作流，无 CUDA 明确提示并禁止提交检测；记录在 `logs/gpu-browser-qa.json`，截图为 `logs/gpu-only-ui.png`。临时验收服务已停止。
 - Shell 入口通过 Git Bash 语法检查；不代表已在 Ubuntu 安装或运行。Python 源码语法、文档链接和 Git 私有资产检查另行记录在 `logs/gpu-cleanup-audit.json`。
@@ -62,3 +62,16 @@ GPU 源码提交 4440cfb 与 367 个资产文件已迁移到 `/root/autodl-tmp/V
 服务器 PyPI 可达，Hugging Face 页面连接失败，但其官方元数据返回的 CDN 可达。没有修改系统 DNS、代理或证书，没有切换未知镜像。分发文件与权重均须匹配固定哈希后才进入安装或加载。
 
 新增预算和锁选择回归后，本机执行 `.venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --junitxml=logs/autodl-source-tests.xml`，133 passed、1 skipped、53 warnings，55.94 秒，退出 0。真实服务器的安装、模型加载与验收结果另见后续记录，不能以这些本机测试代替。
+
+## 2026-10-22 工程化：格式化、静态检查、标注与全新服务器入口
+
+本轮只改可读性、静态检查和部署入口，不修改任何推理逻辑、阈值、模型或实验结论。
+
+- 格式化：`ruff format` 覆盖 53 个 Python 文件，`prettier 3.6.2` 覆盖前端 4 个文件（`main.tsx` 从 219 行展开为 1581 行，最长行从 1936 字符降到 153）。纯排版，无行为变化。
+- 静态检查：ruff 规则集 `E4/E7/E9/F/I/UP`，修复 42 处未使用导入与单行多导入、2 处手工问题；`pyproject.toml` 固化配置，`scripts/*.py` 豁免 `E402`。
+- 标注与文档：包内 152 个函数返回标注从 **8% → 100%**，docstring 从 **3% → 81%**。`service.py`、`resident.py`、`vllm_runtime.py` 等并发模块补上不变量说明（队列事务边界、generation token、lease 语义、失败降级）。
+- CI：新增 `.github/workflows/ci.yml`，含 style（ruff + prettier + `tsc` + `vite build`）与 pytest 两个 job。本机等价命令全部通过；GitHub runner 上的依赖安装尚未验证。
+- 部署：新增 `scripts/deploy_fresh_gpu.sh` 单一入口，固定「审计 → 资产检查 → 应用环境 → vLLM 环境 → 网络探测 → 权重 → 验收」顺序。`pai_vllm.py` 移除内置默认根目录，改为 `--root` → `VISIONINSPECT_GPU_ROOT` → 报错；`download` 在缺少 `runtime-check.json` 时提示先运行 `setup_vllm.sh`。
+- 回归：新增 5 项测试覆盖根目录回退与下载前置条件，本机 `.venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider` 为 **138 passed、1 skipped，55.55 秒，退出 0**。
+
+这些是本机工程验证，不构成 GPU 运行、精度或收益证据。新实例上仍需执行 `deploy_fresh_gpu.sh` 第 5 阶段的两次验收并记录峰值。

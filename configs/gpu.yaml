@@ -1,5 +1,6 @@
 schema_version: 1
 enabled: true
+# 示例路径：每个实例都必须用 VISIONINSPECT_GPU_ROOT 覆盖（AutoDL: source scripts/env_autodl.sh）
 root: /mnt/systemDisk/VisionInspect-GPU
 python: /usr/local/bin/python3
 endpoint: http://127.0.0.1:8001

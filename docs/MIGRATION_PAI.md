@@ -2,6 +2,10 @@
 
 代码由 Git 管理，数据、checkpoint、profile、参考索引、ResNet 权重与前端构建由独立资产包迁移。虚拟环境、用户检测历史、密钥和大型 VLM 不进入 Git。仅私下迁移自己的非商业研究实例。
 
+> **路径说明**：本文中的 `/mnt/workspace`、`/usr/local/bin/python3` 是旧 PAI 实例的示例，不能原样用于其他机器。AutoDL 实例的项目目录是 `/root/autodl-tmp/VisionInspect`、基础解释器是 `/root/miniconda3/bin/python`，由 `scripts/env_autodl.sh` 统一设置。
+>
+> **全新服务器**（两个环境都不存在、vLLM 未安装）不需要按本文逐步操作，直接用单一入口 `bash scripts/deploy_fresh_gpu.sh`；它已固定正确顺序并在缺资产时提前停止，详见 [同机部署](DEPLOY_SAME_HOST.md)。
+
 ## 导出与恢复
 
 在有既有资产的源项目，先提交源码，再用当前项目解释器执行：
