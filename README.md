@@ -122,7 +122,7 @@ npm --prefix frontend run build
 
 Python 侧不引入与运行时无关的依赖：`ruff` 通过 `uvx ruff@0.14.4` 调用，不装进项目 `.venv`。代码风格约定是 ruff 默认行宽 88、isort 分组、pyupgrade 现代写法；lint 规则集为 `E4/E7/E9/F/I/UP`，脚本目录豁免 `E402`。
 
-无 CUDA 的开发机器只验证 API、队列、规则和进程协议，真实 GPU 测试会明确跳过。PAI 已由用户核实 A10、CUDA 13、vLLM 原生扩展和架构注册；应用 CUDA 安装、PatchCore GPU 数值、Qwen 权重加载、多步复核和显存峰值仍须服务器验证。最新记录见 [UPGRADE_STATUS](docs/UPGRADE_STATUS.md)。
+无 CUDA 的开发机器只验证 API、队列、规则和进程协议，真实 GPU 测试会明确跳过。2026-10-22 已在 AutoDL RTX 4080 SUPER 32 GB 上完成真机验收：PatchCore CUDA 峰值 54.9 MiB、vLLM 峰值 27,654 MiB、单次复核决策 3.76 秒、`full_agent_loop_exercised: true`。**仍缺 baseline 与 agent_review 的对照实验**（AUROC / AUPRO / 复核触发比例），历史 CPU 指标不能当作 GPU 结果。完整记录见 [UPGRADE_STATUS](docs/UPGRADE_STATUS.md)。
 
 本次按用户要求移除了 CPU SmolVLM、旧 fixed/dynamic 流程、EfficientAD 分支、Windows 运行脚本、CPU 容器配置和重复依赖锁。历史代码及实验说明由 Git 标签 `pre-gpu-only-20261022` 保留；本地数据、旧权重与结果没有物理删除。
 

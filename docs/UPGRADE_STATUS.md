@@ -75,3 +75,52 @@ GPU 源码提交 4440cfb 与 367 个资产文件已迁移到 `/root/autodl-tmp/V
 - 回归：新增 5 项测试覆盖根目录回退与下载前置条件，本机 `.venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider` 为 **138 passed、1 skipped，55.55 秒，退出 0**。
 
 这些是本机工程验证，不构成 GPU 运行、精度或收益证据。新实例上仍需执行 `deploy_fresh_gpu.sh` 第 5 阶段的两次验收并记录峰值。
+
+## 2026-10-22 真机验收：AutoDL RTX 4080 SUPER 32 GB
+
+第一次在真实 GPU 上跑通完整链路，验收记录在服务器 `outputs/20261022-224407-gpu-verification-f294a5`。
+
+```json
+{"passed": true, "full_agent_loop_exercised": true, "vlm_requested": true}
+```
+
+| 项 | 实测 |
+| --- | --- |
+| 设备 / 运行时 | RTX 4080 SUPER（SM 8.9，BF16）/ CUDA 13.0 / torch 2.13.0+cu130 |
+| PatchCore CUDA 峰值分配 | 57,566,208 字节（54.9 MiB） |
+| checkpoint 重载后热图差异 | 0.0（逐位一致） |
+| clear 样本（区间外） | `normal_candidate`，0 次模型调用 |
+| uncertain 样本（区间内） | `normal_candidate`，2 次模型调用 |
+| 单次结构化决策耗时 | 3.76 秒（957 prompt tokens / 123 completion tokens） |
+| vLLM 峰值显存 | 27,654 MiB |
+| vLLM 进程树峰值 RSS | 7,798,042,624 字节（7.26 GiB） |
+| 空闲 TTL 回收 | 通过（冒烟用 2 秒 TTL） |
+
+只使用正常验证样本，未重算阈值、未评估准确率。这些数字证明**工程链路可用**，不构成精度或收益证据。
+
+### 本轮修掉的四个真实缺陷
+
+| 缺陷 | 现象 | 提交 |
+| --- | --- | --- |
+| vLLM 子进程 PATH 缺少 venv 的 bin | flashinfer 首次推理 JIT 编译时 `FileNotFoundError: ninja`，引擎初始化失败 | `d72529a` |
+| 上一修复用 `sys.executable.resolve()` 取目录 | venv 的 python 是软链，resolve 后指向 conda base，修复等于无效 | `145c97f` |
+| 提示词证据 id 与实际不符 | 提示词写 `query_crop`/`reference_crop`，实际 id 是 `region:Rk`/`matched:Rk:N`，模型必然绑错证据 | `02377b7` |
+| `compare_region` 省略 `reference_id` 被直接拒绝 | 契约中该字段可选，校验却要求必填，合理输出被判 schema_error | `16ece16` |
+
+另外调整了失败策略：`schema_error` 属于模型格式失误而非证据矛盾，允许在调用预算内重试一次。
+
+### 网络实测
+
+| 路线 | 速度 |
+| --- | --- |
+| Hugging Face（经 AutoDL 学术加速代理） | 0.7 MB/s |
+| Hugging Face（直连） | 0（12 秒 0 字节） |
+| ModelScope（国内直连） | 17 MB/s |
+| 清华 PyPI（经代理） | 285 kB/s |
+| 清华 PyPI（不走代理） | 15.5 MB/s |
+
+权重改用 ModelScope 固定 revision `5d854aab08710c16b980ec6d603d863b3821b915` 下载，15 个文件仍逐一通过 `pai_vllm.py` 的大小与 SHA256 校验后才写入 `source.json`，没有放宽任何验证。学术加速只对 Hugging Face 有用，对 pip 与 ModelScope 反而是负担。
+
+### 仍未完成
+
+`baseline` 与 `agent_review` 的对照实验（图像级 AUROC、AUPRO、复核触发比例）。历史 CPU 记录 `image_auroc 1.0 / aupro 0.924` 来自 CPU checkpoint，不能作为 GPU 结果引用；需要在新设备上重新 `fit` → `calibrate` → `evaluate` 才有可比数据。
