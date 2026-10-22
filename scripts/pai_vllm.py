@@ -341,12 +341,35 @@ def server_command(root):
     ]
 
 
+def cuda_toolkit_bin():
+    """Return the CUDA toolkit bin directory, or None when none is installed."""
+    for candidate in (os.environ.get("CUDA_HOME"), "/usr/local/cuda"):
+        if candidate and (Path(candidate) / "bin/nvcc").is_file():
+            return str(Path(candidate) / "bin")
+    return None
+
+
 def server_environment():
+    """Build the child environment for the vLLM server.
+
+    The venv is never activated, so its bin directory must be placed on PATH
+    explicitly: flashinfer JIT-compiles its sampling kernels and calls "ninja"
+    by name, which otherwise raises FileNotFoundError at first inference. The
+    CUDA toolkit bin directory is included for the same reason.
+    """
     guard = str(Path(__file__).resolve().parent / "runtime_guard")
+    parts = [str(Path(sys.executable).resolve().parent)]
+    toolkit = cuda_toolkit_bin()
+    if toolkit:
+        parts.append(toolkit)
+    inherited = os.environ.get("PATH", "")
+    if inherited:
+        parts.append(inherited)
     return dict(
         os.environ,
         VISIONINSPECT_VLLM_OFFLINE="1",
         VLLM_HOST_IP="127.0.0.1",
+        PATH=os.pathsep.join(parts),
         PYTHONPATH=guard + os.pathsep + os.environ.get("PYTHONPATH", ""),
     )
 

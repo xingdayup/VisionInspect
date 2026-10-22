@@ -1,6 +1,8 @@
 """Probe control-flow regression with fake packages; no GPU compatibility claim."""
 
+import os
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -105,3 +107,19 @@ def test_download_rejects_a_failed_runtime_check(tmp_path):
     (tmp_path / "logs/runtime-check.json").write_text('{"passed": false}', "utf8")
     with pytest.raises(RuntimeError, match="did not pass"):
         pai_vllm.download(tmp_path)
+
+
+def test_server_environment_puts_the_interpreter_bin_on_path(monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    entries = pai_vllm.server_environment()["PATH"].split(os.pathsep)
+    assert entries[0] == str(Path(sys.executable).resolve().parent)
+    assert entries[-1] == "/usr/bin"
+
+
+def test_cuda_toolkit_bin_is_used_only_when_nvcc_exists(tmp_path, monkeypatch):
+    fake = tmp_path / "cuda"
+    (fake / "bin").mkdir(parents=True)
+    monkeypatch.setenv("CUDA_HOME", str(fake))
+    assert pai_vllm.cuda_toolkit_bin() is None
+    (fake / "bin/nvcc").write_text("", encoding="utf8")
+    assert pai_vllm.cuda_toolkit_bin() == str(fake / "bin")
