@@ -17,7 +17,23 @@ from .tools import ToolFailure
 
 MAX_RESPONSE_BYTES = 1024**2
 THUMBNAIL_SIDE = 512
+MIN_EVIDENCE_SIDE = 256
 MAX_EVIDENCE_IMAGES = 3
+
+
+def ensure_minimum_side(image: Image.Image, minimum: int) -> Image.Image:
+    """Upscale a small crop so the model receives detail, not a thumbnail.
+
+    Region crops are cut from the anomaly map and can be only ~50 px wide.
+    Sending them unchanged leaves almost nothing to compare, which surfaces as
+    an unclear finding or a refusal to conclude.
+    """
+    shortest = min(image.size)
+    if shortest >= minimum:
+        return image
+    scale = minimum / shortest
+    size = (round(image.width * scale), round(image.height * scale))
+    return image.resize(size, Image.Resampling.LANCZOS)
 
 
 def _json_object(text: str) -> str | None:
@@ -85,6 +101,7 @@ class VLLMClient:
                 image.thumbnail(
                     (THUMBNAIL_SIDE, THUMBNAIL_SIDE), Image.Resampling.LANCZOS
                 )
+                image = ensure_minimum_side(image, MIN_EVIDENCE_SIDE)
                 saved = directory / f"image_{index}.png"
                 image.save(saved)
             content.append(dict(type="text", text=f"证据身份：{item['id']}"))

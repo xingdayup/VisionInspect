@@ -16,7 +16,7 @@ from scripts.pai_vllm import MODEL, REVISION, validate_source
 from visioninspect.common import offline, read_json, write_json
 from visioninspect.review_contracts import ReviewDecision
 from visioninspect.tools import ToolFailure
-from visioninspect.vllm_client import VLLMClient, parse_decision
+from visioninspect.vllm_client import VLLMClient, ensure_minimum_side, parse_decision
 from visioninspect.vllm_runtime import VLLMRuntime, gpu_assets_available, gpu_config
 
 
@@ -269,3 +269,15 @@ def test_fenced_or_wrapped_json_is_repaired_once(wrapper):
 def test_text_without_an_object_still_fails():
     with pytest.raises(ValueError):
         parse_decision("无法判断，没有给出结构化结果。")
+
+
+def test_small_evidence_crops_are_upscaled_to_the_minimum_side():
+    tiny = Image.new("RGB", (40, 30), (90, 90, 90))
+    scaled = ensure_minimum_side(tiny, 256)
+    assert min(scaled.size) == 256
+    assert scaled.size == (341, 256)
+
+
+def test_large_evidence_images_are_left_untouched():
+    big = Image.new("RGB", (900, 700), (90, 90, 90))
+    assert ensure_minimum_side(big, 256) is big
