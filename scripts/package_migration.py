@@ -5,6 +5,7 @@ import json
 import subprocess
 import tarfile
 import time
+import zipfile
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -56,6 +57,11 @@ def main():
         'git clone visioninspect.bundle VisionInspect\ncd VisionInspect\n'
         '/usr/local/bin/python3 -B scripts/install_assets.py --package ..\n'
         'bash scripts/setup_pai.sh\nSee docs/MIGRATION_PAI.md for explicit GPU preparation and verification.\n',encoding='utf8')
+    portable=target/'visioninspect-pai-migration.zip'
+    with zipfile.ZipFile(portable,'w',compression=zipfile.ZIP_STORED) as output:
+        for name in ['visioninspect.bundle','visioninspect-assets.tar.gz','transfer-manifest.json','START-HERE.txt']:
+            output.write(target/name,arcname=name)
+    (target/'visioninspect-pai-migration.zip.sha256').write_text(digest(portable)+'  '+portable.name+'\n',encoding='ascii')
     print(target,flush=True)
 
 

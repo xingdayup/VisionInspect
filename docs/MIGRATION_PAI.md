@@ -17,12 +17,21 @@
 - `visioninspect-assets.tar.gz`：必要本地资产，输入总量上限 500 MiB。
 - `transfer-manifest.json`：归档及逐文件大小和 SHA256。
 - `START-HERE.txt`：恢复入口。
+- `visioninspect-pai-migration.zip`：上述文件的单文件传输包，旁边附 ZIP 的 SHA256。
 
 仅私下迁移到自己的研究实例。bottle 为 CC-BY-NC-SA-4.0，归档内保留数据许可；不将数据包或权重上传到 Git 仓库。
 
 ## 2. 上传并恢复
 
 通过 DSW 文件管理界面把三个迁移文件放到 `/mnt/workspace/visioninspect-transfer/`，然后在 DSW 终端运行：
+
+也可只上传 `visioninspect-pai-migration.zip` 到 `/mnt/workspace/`，用平台 Python 解压，不需安装工具：
+
+```bash
+/usr/local/bin/python3 -m zipfile -e /mnt/workspace/visioninspect-pai-migration.zip /mnt/workspace/visioninspect-transfer
+```
+
+随后执行：
 
 ```bash
 cd /mnt/workspace/visioninspect-transfer
