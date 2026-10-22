@@ -1,7 +1,15 @@
+"""CUDA PatchCore driver.
+
+Anomalib's PatchcoreModel is driven directly, with no Trainer, no automatic
+weight download and no threshold fitting: calibration happens offline and the
+resulting profile is checked before anything is loaded here.
+"""
+
 from __future__ import annotations
 
 import copy
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +21,8 @@ from torchvision.transforms.functional import normalize, resize
 from .common import project_path, read_json, sha256
 
 
-def setup(config: dict):
+def setup(config: dict) -> None:
+    """Pin every source of nondeterminism we can control before inference."""
     torch.set_num_threads(config["runtime"]["threads"])
     torch.manual_seed(config["runtime"]["seed"])
     np.random.seed(config["runtime"]["seed"])
@@ -23,7 +32,8 @@ def setup(config: dict):
     torch.backends.cudnn.benchmark = False
 
 
-def cuda_device():
+def cuda_device() -> torch.device:
+    """Return cuda:0 or fail loudly; there is no CPU fallback by design."""
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required for PatchCore; CPU fallback is disabled")
     return torch.device("cuda:0")
@@ -32,7 +42,7 @@ def cuda_device():
 class Detector:
     """Drive Anomalib's PatchcoreModel directly: no Trainer, auto-download, or threshold fitting."""
 
-    def __init__(self, config: dict, size: int | None = None):
+    def __init__(self, config: dict, size: int | None = None) -> None:
         self.device = cuda_device()
         from anomalib.models.image.patchcore.torch_model import PatchcoreModel
 
@@ -51,7 +61,8 @@ class Detector:
             .float()
         )
 
-    def load_backbone(self):
+    def load_backbone(self) -> str:
+        """Load the local ImageNet weights after verifying their recorded hash."""
         from safetensors.torch import load_file
 
         path = project_path(self.config["model"]["weights"])
@@ -72,7 +83,8 @@ class Detector:
         extractor.load_state_dict({key: state[key] for key in expected}, strict=True)
         return actual_hash
 
-    def tensor(self, array: np.ndarray):
+    def tensor(self, array: np.ndarray) -> torch.Tensor:
+        """Convert an HWC uint8 image into a normalized NCHW CUDA batch."""
         tensor = (
             torch.from_numpy(np.array(array, copy=True))
             .permute(2, 0, 1)
@@ -91,13 +103,23 @@ class Detector:
             .to(self.device)
         )
 
-    def fit(self, root: Path, records: list[dict], progress=None):
+    def fit(
+        self,
+        root: Path,
+        records: list[dict],
+        progress: Callable[[str], None] | None = None,
+    ) -> None:
+        """Build the memory bank from normal training images only.
+
+        The backbone stays in eval mode so ImageNet batch-norm statistics are
+        never updated; only the coreset subsampling runs here.
+        """
         if any(
             record["split"] != "train" or record["label"] != 0 for record in records
         ):
             raise ValueError("Only normal training records can build the memory bank")
         self.model.train()
-        self.model.feature_extractor.eval()  # Never update ImageNet batch norm statistics.
+        self.model.feature_extractor.eval()
         with torch.no_grad():
             for index, record in enumerate(records):
                 with Image.open(root / record["path"]) as image:
@@ -110,7 +132,8 @@ class Detector:
             )
         self.model.eval()
 
-    def predict(self, array: np.ndarray):
+    def predict(self, array: np.ndarray) -> tuple[float, np.ndarray, float]:
+        """Return the image score, the anomaly map and the timed CUDA inference."""
         torch.cuda.synchronize(self.device)
         torch.cuda.reset_peak_memory_stats(self.device)
         start = time.perf_counter()
@@ -129,7 +152,8 @@ class Detector:
             raise ValueError("Non-finite score / invalid anomaly map")
         return score, anomaly_map, seconds
 
-    def save(self, path: Path, metadata: dict):
+    def save(self, path: Path, metadata: dict) -> None:
+        """Persist the weights together with the config they were fitted under."""
         torch.save(
             dict(
                 schema_version=1,
@@ -142,8 +166,13 @@ class Detector:
         )
 
     @classmethod
-    def load(cls, path: Path, config: dict | None = None):
-        cuda_device()  # Reject unavailable CUDA before reading a potentially large checkpoint.
+    def load(cls, path: Path, config: dict | None = None) -> tuple[Detector, dict]:
+        """Load a checkpoint onto CUDA without letting the config silently change.
+
+        The checkpoint is deserialized on the host, then the model and memory
+        bank must both land on CUDA before the detector is returned.
+        """
+        cuda_device()
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)
         if checkpoint["schema_version"] != 1:
             raise ValueError("Unsupported checkpoint schema")

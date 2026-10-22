@@ -1,5 +1,7 @@
 """CLI for the same supervised workflow used by the workstation."""
 
+from __future__ import annotations
+
 import argparse
 import time
 from pathlib import Path
@@ -8,7 +10,8 @@ from .common import ROOT, configure_environment
 from .service import TaskStore, registry
 
 
-def main():
+def main() -> int:
+    """Submit one image through the queue and wait for its terminal state."""
     parser = argparse.ArgumentParser(description="GPU 视觉质检工作台命令行入口")
     parser.add_argument("--image", type=Path, required=True)
     parser.add_argument("--category", default="bottle")

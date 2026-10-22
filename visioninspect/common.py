@@ -1,3 +1,5 @@
+"""Shared paths, atomic JSON access and process-level environment guards."""
+
 from __future__ import annotations
 
 import hashlib
@@ -6,19 +8,23 @@ import os
 import socket
 import tempfile
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def project_path(value: str) -> Path:
+    """Resolve a config path against the project root unless it is absolute."""
     path = Path(value)
     return path.resolve() if path.is_absolute() else (ROOT / path).resolve()
 
 
 def sha256(path: Path) -> str:
+    """Hash a file in 1 MiB blocks so large checkpoints do not load into memory."""
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
@@ -26,7 +32,8 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def write_json(path: Path, value) -> None:
+def write_json(path: Path, value: Any) -> None:
+    """Write JSON atomically, retrying the rename on Windows sharing violations."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".part")
     temporary.write_text(
@@ -43,9 +50,11 @@ def write_json(path: Path, value) -> None:
             time.sleep(0.01 * (attempt + 1))
 
 
-def read_json(path: Path):
-    # A filesystem can briefly deny a reader during an atomic replacement.
-    # Corrupt JSON and genuine missing files still fail immediately.
+def read_json(path: Path) -> Any:
+    """Read JSON, tolerating the brief window of an in-progress replacement.
+
+    Corrupt JSON and genuinely missing files still fail immediately.
+    """
     for attempt in range(6):
         try:
             return json.loads(path.read_text(encoding="utf-8"))
@@ -56,7 +65,10 @@ def read_json(path: Path):
 
 
 def configure_environment() -> None:
-    # Only this process and its children; never persists host environment settings.
+    """Point every cache at the project and force offline model loading.
+
+    Only this process and its children are affected; host settings never change.
+    """
     for name, relative in {
         "HF_HOME": ".cache/huggingface",
         "TORCH_HOME": ".cache/torch",
@@ -75,19 +87,23 @@ def configure_environment() -> None:
     os.environ.setdefault("PYTORCH_NVML_BASED_CUDA_CHECK", "1")
     os.environ["MPLCONFIGDIR"] = str(ROOT / ".cache/matplotlib")
     os.environ["MPLBACKEND"] = "Agg"
-    # Python may have cached its temp directory before environment configuration.
+    # Python may have cached its temp directory before this configuration.
     tempfile.tempdir = str(ROOT / ".tmp")
 
 
 @contextmanager
-def offline(allow_loopback_ports=()):
-    """Fail closed on Python network connections, including accidental model downloads."""
+def offline(allow_loopback_ports: tuple[int, ...] = ()) -> Iterator[None]:
+    """Fail closed on Python network connections, including accidental downloads.
+
+    Only 127.0.0.1 on the listed ports is reachable, which is exactly what the
+    local vLLM socket needs and nothing more.
+    """
     ports = frozenset(allow_loopback_ports)
     original_connect = socket.socket.connect
     original_connect_ex = socket.socket.connect_ex
     original_create = socket.create_connection
 
-    def permitted(address):
+    def permitted(address: Any) -> bool:
         return (
             isinstance(address, tuple)
             and len(address) >= 2
@@ -95,20 +111,20 @@ def offline(allow_loopback_ports=()):
             and address[1] in ports
         )
 
-    def denied(*args, **kwargs):
+    def denied(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError(
             "Network disabled during baseline execution; prepare local assets first"
         )
 
-    def connect(instance, address):
+    def connect(instance: socket.socket, address: Any) -> Any:
         return original_connect(instance, address) if permitted(address) else denied()
 
-    def connect_ex(instance, address):
+    def connect_ex(instance: socket.socket, address: Any) -> Any:
         return (
             original_connect_ex(instance, address) if permitted(address) else denied()
         )
 
-    def create(address, *args, **kwargs):
+    def create(address: Any, *args: Any, **kwargs: Any) -> Any:
         return (
             original_create(address, *args, **kwargs)
             if permitted(address)
@@ -124,6 +140,7 @@ def offline(allow_loopback_ports=()):
 
 
 def load_config(path: Path) -> dict:
+    """Load a runtime config and reject anything that would imply CPU fallback."""
     import yaml
 
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -142,6 +159,7 @@ def load_config(path: Path) -> dict:
 
 
 def identity(value: dict) -> str:
+    """Return a stable digest for a JSON-serializable structure."""
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()

@@ -1,5 +1,7 @@
 """Offline inspections with request-scoped tools and process-scoped model assets."""
 
+from __future__ import annotations
+
 import argparse
 import contextlib
 import json
@@ -27,7 +29,16 @@ from .service import registry
 from .tools import ToolKit
 
 
-def main(directory, cache=None, worker_runtime=None):
+def main(
+    directory: Path,
+    cache: ModelCache | None = None,
+    worker_runtime: dict | None = None,
+) -> dict:
+    """Run one inspection inside an offline, request-scoped tool context.
+
+    The frozen policy and registration snapshot travel with the request, so a
+    config edit made after submission cannot change how the task is scored.
+    """
     request = read_json(directory / "request.json")
     snapshot = request.get("snapshot") or {}
     policy = snapshot.get("policy") or yaml.safe_load(
@@ -43,6 +54,7 @@ def main(directory, cache=None, worker_runtime=None):
     configure_environment()
     os.environ["LANGSMITH_TRACING"] = "false"
     os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    # Only the review workflow may reach the local vLLM port; baseline is fully offline.
     with offline(allow_loopback_ports=(8001,) if agent_review else ()):
         tools = ToolKit(registration, policy, directory, cache=cache)
         if (
@@ -51,11 +63,12 @@ def main(directory, cache=None, worker_runtime=None):
         ):
             raise ValueError("模型策略与提交任务时的快照不一致")
 
-        def progress(value):
+        def progress(value: dict) -> None:
             write_json(directory / "progress.json", value)
 
         if agent_review:
             from .review_agent import ReviewAgent
+            from .review_contracts import REVIEW_PROMPT, REVIEW_RULE_VERSION
             from .vllm_client import VLLMClient
             from .vllm_runtime import gpu_config
 
@@ -67,7 +80,6 @@ def main(directory, cache=None, worker_runtime=None):
                 progress,
                 gpu["max_model_calls"],
             ).run(request["image_path"], request["category"])
-            from .review_contracts import REVIEW_PROMPT, REVIEW_RULE_VERSION
 
             report["review_policy"] = dict(
                 version=REVIEW_RULE_VERSION,
@@ -103,7 +115,12 @@ def main(directory, cache=None, worker_runtime=None):
         return report
 
 
-def resident(root, parent_pid=None):
+def resident(root: Path, parent_pid: int | None = None) -> None:
+    """Serve JSON task lines on stdin until EOF or a fatal task failure.
+
+    The parent watch kills this process if the API disappears, so an orphan can
+    never keep a CUDA context alive after the service is gone.
+    """
     configure_environment()
     root = root.resolve()
     cache = ModelCache()
@@ -118,7 +135,7 @@ def resident(root, parent_pid=None):
         except psutil.NoSuchProcess:
             return
 
-        def watch_parent():
+        def watch_parent() -> None:
             while True:
                 threading.Event().wait(1)
                 try:
@@ -162,6 +179,7 @@ def resident(root, parent_pid=None):
                         resident=True,
                     ),
                 )
+                # A review failure keeps usable detection evidence, so it is not a reason to recycle.
                 isolated_review_failure = bool(
                     report.get("mode") == "agent_review"
                     and (report.get("agent_review") or {}).get("status") == "failed"

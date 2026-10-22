@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import time
 from pathlib import Path
 
@@ -13,32 +14,50 @@ from .common import sha256, write_json
 from .review_contracts import REVIEW_PROMPT, ReviewDecision
 from .tools import ToolFailure
 
+MAX_RESPONSE_BYTES = 1024**2
+THUMBNAIL_SIDE = 512
+MAX_EVIDENCE_IMAGES = 3
+
 
 class VLLMClient:
+    """Ask the local vLLM server for one structured review decision.
+
+    The endpoint is pinned to loopback so a misconfigured profile cannot send
+    product images to a remote service. Images are downscaled and hashed before
+    upload, and every request and response is written next to the task evidence.
+    """
+
     backend = "vllm-qwen3-vl-8b"
 
-    def __init__(self, config, startup_error=None):
+    def __init__(self, config: dict, startup_error: str | None = None) -> None:
         if config["endpoint"] != "http://127.0.0.1:8001":
             raise ValueError("Only the configured loopback vLLM endpoint is allowed")
         self.config = config
         self.startup_error = startup_error
 
-    def decide(self, context, images, directory: Path):
+    def decide(
+        self, context: dict, images: list[dict], directory: Path
+    ) -> tuple[ReviewDecision, dict]:
+        """Send 1-3 evidence images and parse a schema-validated decision.
+
+        Raises ToolFailure with a retryable flag instead of leaking transport or
+        validation errors, so the review loop can decide whether to try again.
+        """
         if self.startup_error:
             raise ToolFailure("vlm_unavailable", self.startup_error)
-        if not 1 <= len(images) <= 3:
+        if not 1 <= len(images) <= MAX_EVIDENCE_IMAGES:
             raise ToolFailure("schema_error", "VLM 每次需要 1–3 张独立证据图片")
         directory.mkdir(parents=True, exist_ok=True)
-        content = [
-            dict(
-                type="text", text=__import__("json").dumps(context, ensure_ascii=False)
-            )
+        content: list[dict] = [
+            dict(type="text", text=json.dumps(context, ensure_ascii=False))
         ]
         audit = []
         for index, item in enumerate(images, 1):
             with Image.open(item["path"]) as original:
                 image = ImageOps.exif_transpose(original).convert("RGB")
-                image.thumbnail((512, 512), Image.Resampling.LANCZOS)
+                image.thumbnail(
+                    (THUMBNAIL_SIDE, THUMBNAIL_SIDE), Image.Resampling.LANCZOS
+                )
                 saved = directory / f"image_{index}.png"
                 image.save(saved)
             content.append(dict(type="text", text=f"证据身份：{item['id']}"))
@@ -110,10 +129,8 @@ class VLLMClient:
                     body = bytearray()
                     for block in response.iter_bytes():
                         body.extend(block)
-                        if len(body) > 1024**2:
+                        if len(body) > MAX_RESPONSE_BYTES:
                             raise ToolFailure("schema_error", "VLM 响应超过 1 MiB")
-            import json
-
             raw = json.loads(body)
             write_json(directory / "response.json", raw)
             decision = ReviewDecision.model_validate_json(

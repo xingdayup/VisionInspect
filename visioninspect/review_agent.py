@@ -1,38 +1,70 @@
-"""LangGraph review loop with evidence binding and deterministic candidate gates."""
+"""LangGraph review loop with evidence binding and deterministic candidate gates.
+
+The graph has four nodes:
+
+    baseline -> decide -> tool -> decide ... -> finish -> END
+
+Only an uncertain baseline score pays for a model call. Each decide step must
+quote evidence this round actually supplied, and finish applies deterministic
+gates, so a confident-sounding model cannot promote a candidate on its own.
+"""
 
 from __future__ import annotations
 
 import time
-from typing import TypedDict
+from collections.abc import Callable
+from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict
 
 from PIL import Image
 
 from .agent import InspectionAgent
 from .common import write_json
-from .review_contracts import REVIEW_RULE_VERSION
+from .review_contracts import REVIEW_RULE_VERSION, ReviewDecision
 from .schemas import FinalResult
 from .tools import ToolFailure
 
+if TYPE_CHECKING:
+    from .tools import ToolKit
+    from .vllm_client import VLLMClient
+
 
 class ReviewState(TypedDict, total=False):
+    """Single-key graph state: nodes return the next route only."""
+
     route: str
 
 
 class ReviewAgent:
-    def __init__(self, tools, policy, client, progress=None, max_model_calls=3):
+    """Run the bounded evidence-review loop around one baseline inspection.
+
+    Every model call is budgeted (three by default, retries included). Regions
+    and references are fixed by the baseline stage; the model may only choose
+    which supplied view to look at next, or to finish.
+    """
+
+    def __init__(
+        self,
+        tools: ToolKit,
+        policy: dict,
+        client: VLLMClient,
+        progress: Callable[[dict], None] | None = None,
+        max_model_calls: int = 3,
+    ) -> None:
         self.tools, self.policy, self.client = tools, policy, client
         self.progress = progress or (lambda value: None)
         self.maximum = min(3, max_model_calls)
         self.calls = 0
-        self.rounds = []
-        self.reviewed = {}
-        self.visited = set()
-        self.current = ("global", None, 1)
+        self.rounds: list[dict] = []
+        self.reviewed: dict[str, str] = {}
+        self.visited: set[tuple] = set()
+        self.current: tuple = ("global", None, 1)
         self.retry_count = 0
-        self.failure = None
-        self.last = None
+        self.failure: str | None = None
+        self.last: ReviewDecision | None = None
 
-    def publish(self, stage):
+    def publish(self, stage: str) -> None:
+        """Push a progress snapshot so the UI can show live review state."""
         self.progress(
             dict(
                 stage=stage,
@@ -46,7 +78,12 @@ class ReviewAgent:
             )
         )
 
-    def baseline(self, state):
+    def baseline(self, state: ReviewState) -> dict[str, str]:
+        """Run detection, record the raw candidate, and decide whether to review.
+
+        Detection evidence is written to disk before any model call so a later
+        failure cannot erase it.
+        """
         self.report = InspectionAgent(self.tools, self.policy, self.progress).run(
             self.image_path, self.category, "agent_review"
         )
@@ -80,7 +117,6 @@ class ReviewAgent:
         self.report["agent_review"] = dict(
             status="skipped", reason="未进入不确定区间或检测未完成", rounds=[], calls=0
         )
-        # Retain detection evidence even when a later VLM request fails.
         write_json(self.tools.output / "baseline-result.json", self.report)
         if not eligible or self.report["errors"]:
             return dict(route="finish")
@@ -89,7 +125,12 @@ class ReviewAgent:
             return dict(route="finish")
         return dict(route="decide")
 
-    def images(self):
+    def images(self) -> list[dict]:
+        """Materialize the 1-3 images that constitute the current view.
+
+        A region view always pairs the query crop with the same coordinates in
+        the reference image, so the model compares like with like.
+        """
         kind, region_id, reference_id = self.current
         root = self.tools.output
         if kind == "global":
@@ -117,7 +158,13 @@ class ReviewAgent:
             dict(id=f"matched:{region_id}:{reference_id}", path=destination),
         ]
 
-    def validate(self, decision, images):
+    def validate(self, decision: ReviewDecision, images: list[dict]) -> None:
+        """Enforce evidence binding before a decision is allowed to count.
+
+        Every observation must cite evidence ids that were actually supplied,
+        and a normal verdict must come with a matching local comparison for
+        every extracted region.
+        """
         allowed = {item["id"] for item in images}
         kind, region_id, reference_id = self.current
         for observation in decision.observations:
@@ -174,7 +221,8 @@ class ReviewAgent:
         ):
             raise ToolFailure("schema_error", "结束动作不得携带新的工具参数")
 
-    def decide(self, state):
+    def decide(self, state: ReviewState) -> dict[str, str]:
+        """Ask the model for one bounded next step, then validate the reply."""
         started = time.perf_counter()
         self.calls += 1
         trace = dict(
@@ -260,7 +308,8 @@ class ReviewAgent:
             trace["seconds"] = time.perf_counter() - started
             self.publish("agent_decision")
 
-    def tool(self, state):
+    def tool(self, state: ReviewState) -> dict[str, str]:
+        """Switch to the requested view, refusing to revisit an already seen one."""
         decision = self.last
         view = (
             ("region", decision.region_id, decision.reference_id)
@@ -288,7 +337,13 @@ class ReviewAgent:
         self.publish(decision.action)
         return dict(route="decide")
 
-    def finish(self, state):
+    def finish(self, state: ReviewState) -> dict[str, str]:
+        """Apply the deterministic gates and record the final candidate.
+
+        A normal verdict is only accepted when every extracted region was
+        compared, no anomaly observation was recorded, the references were
+        similar enough, and the region extraction was not truncated.
+        """
         if self.report["review_eligible"]:
             reasons = []
             final_state = "manual_review"
@@ -374,7 +429,8 @@ class ReviewAgent:
         self.publish("completed")
         return dict(route="end")
 
-    def run(self, image_path, category):
+    def run(self, image_path: str | Path, category: str) -> dict:
+        """Compile and execute the graph; the compiled report is the return value."""
         from langgraph.graph import END, START, StateGraph
 
         self.image_path, self.category = str(image_path), category
