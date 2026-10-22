@@ -69,6 +69,8 @@ VISIONINSPECT_GPU_ENABLED=0 bash scripts/start_pai.sh
 /usr/local/bin/python3 -B scripts/pai_vllm.py preflight
 ```
 
+如果旧迁移包的 `check` 报 `No module named 'vllm._C'`，先更新检查脚本，不要据此重装平台依赖。固定 vLLM 0.27.1 的原生扩展检查应为 `vllm._C_stable_libtorch`，与[该版本官方 CUDA 入口](https://github.com/vllm-project/vllm/blob/v0.27.1/vllm/platforms/cuda.py)一致。该扩展不存在或加载失败时仍须停止；不能跳过检查。更新脚本通过导入只证明这一检查项，实际模型加载和生成仍需后续验证。
+
 检查 `logs/runtime-check.json` 与 `logs/model-preflight.json`，这里的 logs 在 `/mnt/systemDisk/VisionInspect-GPU/` 内。预检固定：
 
 - Qwen/Qwen3-VL-8B-Instruct，Apache-2.0。

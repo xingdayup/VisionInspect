@@ -19,7 +19,7 @@
 ```
 
 - 改造前 86 项测试通过。新增依赖锁解析不改原有版本，新增 22 包，候选 wheel 合计 3,584,414 字节；仅安装到项目 `.venv`。实际安装及前后版本在 logs/agent-install.log、packages-before-agent.txt、packages-after-agent.txt。
-- 最新全量测试结果以 logs/upgrade-checks.json、upgrade-tests.xml 为准；2026-10-22 本次执行为 130 passed、54 warnings，耗时 57.23 秒，现有 PyTorch/Starlette 弃用及 pytest XML 属性警告如实保留。
+- 截至提交 741ed42 的全量测试记录为 logs/upgrade-checks.json、upgrade-tests.xml；2026-10-22 执行为 130 passed、54 warnings，耗时 57.23 秒，现有 PyTorch/Starlette 弃用及 pytest XML 属性警告如实保留。后续原生检查修复的最新测试见下节。
 - 前端 TypeScript 检查及 Vite 生产构建成功。真实浏览器验证包含批次创建、两张成功上传、一张损坏文件拒绝、真实正常图推理、合成平灰图质量失败、人工记录、汇总更新和 CSV 下载；合成图仅用于工程流程，未作为模型效果数据。
 - 真实正常验证图 002.png 分数 8.26118278503418，114.png 分数 8.778727531433105；迁移前 CPU 分数与热图对比的最大热图差为 0。GPU 不可用时 114.png 转人工并保留证据，重试复用同一 CPU worker；记录在 outputs/20261022-144917-upgrade-cpu-verification-9039ef/verification.json。Windows 短暂文件共享冲突已增加有界读写重试，原失败日志保存在 logs/upgrade-cpu-share-violation.log，重新执行通过。没有重新训练、修改阈值或重跑正式测试集指标。
 - Git bundle 已在全新目录 `.cache/migration-qa/20261022-145340-2bd61878` 克隆并验证，376 个文件恢复成功；完整数据检查与迁移后真实 CPU 验证均退出 0，分数和热图保持一致。六条实际命令、退出码和日志在 logs/migration-verification.json；使用的是现有项目解释器验证 Windows 路径迁移，不冒充 Ubuntu 环境安装。
@@ -33,6 +33,12 @@
 - PAI 安装和启动增加只读项目环境校验：要求本项目独立 `.venv`、Python 3.12、禁用系统包；拒绝链接到其他环境、base/system Python、缺失环境元数据及冲突配置。新增 7 项环境校验用例。
 - 实际执行 `.\.venv\Scripts\python.exe -B scripts/check_project_environment.py`，本机环境通过；两个 PAI shell 脚本通过 Git Bash `bash -n`。上述检查没有安装依赖或修改系统环境，Ubuntu 实际运行仍待验证。
 - 修复前的 5 项失败复现保存在 logs/post-audit-reproduction.log；修复后的全量测试、前端构建和 Git 内容检查均退出 0，完整命令及依赖版本在 logs/upgrade-checks.json。
+
+## PAI 原生检查模块名修复
+
+- 用户在 PAI 实际执行 `pai_vllm.py check` 后，报告旧模块 `vllm._C` 不存在。核对 vLLM 0.27.1 官方源码，其 CUDA 入口导入 `vllm._C_stable_libtorch`；本项目检查脚本已改用该模块，没有跳过原生检查，也没有安装或升级平台依赖。
+- 新增模拟包结构的回归测试，覆盖旧模块不存在但新版模块可用，以及新版模块缺失、共享库加载失败时仍明确失败；这类本机测试不代表 PAI GPU 原生扩展或模型已通过。
+- 修复前 3 项失败复现见 logs/pai-native-probe-before-fix.log。修复后实际执行 `.\.venv\Scripts\python.exe -B -m pytest -q -p no:cacheprovider --junitxml=logs/pai-native-fix-tests.xml`，退出 0，133 passed、54 warnings，耗时 60.24 秒；日志为 logs/pai-native-fix-tests.log。远端需更新脚本后重新执行原命令并回传输出。
 
 ## 待验证，不作为已完成成果
 

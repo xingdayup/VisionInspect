@@ -46,7 +46,7 @@ def check(root):
         raise RuntimeError(f'Preinstalled versions changed; review before continuing: {versions}')
     import torch
     if not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():raise RuntimeError('CUDA/BF16 unavailable')
-    importlib.import_module('vllm._C')
+    importlib.import_module('vllm._C_stable_libtorch')
     from vllm.model_executor.models import ModelRegistry
     if 'Qwen3VLForConditionalGeneration' not in ModelRegistry.get_supported_archs():
         raise RuntimeError('Qwen3-VL architecture not registered')
