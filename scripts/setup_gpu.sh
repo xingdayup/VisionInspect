@@ -9,9 +9,14 @@ if [[ -L .venv ]]; then
   exit 1
 fi
 bootstrap_python="${BOOTSTRAP_PYTHON:-/usr/local/bin/python3}"
-sources=(--index-url https://pypi.org/simple --timeout 90 --retries 3)
+index_url="${VISIONINSPECT_PYPI_INDEX:-https://pypi.org/simple}"
+[[ "$index_url" == https://* ]] || { echo "Package index must use HTTPS" >&2; exit 1; }
+sources=(--index-url "$index_url" --timeout 90 --retries 3)
 if [[ -n "${VISIONINSPECT_WHEELHOUSE:-}" ]]; then
-  sources=(--no-index --find-links "$VISIONINSPECT_WHEELHOUSE")
+  sources+=(--find-links "$VISIONINSPECT_WHEELHOUSE")
+  if [[ "${VISIONINSPECT_OFFLINE_INSTALL:-0}" == 1 ]]; then
+    sources=(--no-index --find-links "$VISIONINSPECT_WHEELHOUSE")
+  fi
 fi
 "$bootstrap_python" -B scripts/preflight_pai_app.py "$@" --requirements requirements.txt 2>&1 | tee logs/gpu-app-preflight.log
 if [[ ! -e .venv ]]; then "$bootstrap_python" -m venv .venv; fi

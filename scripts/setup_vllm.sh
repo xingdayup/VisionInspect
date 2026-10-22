@@ -24,9 +24,14 @@ text=(expected/'pyvenv.cfg').read_text().lower()
 if 'include-system-site-packages = false' not in text:
     raise RuntimeError('System package sharing is forbidden')
 CHECK
-sources=(--index-url https://pypi.org/simple --timeout 90 --retries 3)
+index_url="${VISIONINSPECT_PYPI_INDEX:-https://pypi.org/simple}"
+[[ "$index_url" == https://* ]] || { echo "Package index must use HTTPS" >&2; exit 1; }
+sources=(--index-url "$index_url" --timeout 90 --retries 3)
 if [[ -n "${VISIONINSPECT_WHEELHOUSE:-}" ]]; then
-  sources=(--no-index --find-links "$VISIONINSPECT_WHEELHOUSE")
+  sources+=(--find-links "$VISIONINSPECT_WHEELHOUSE")
+  if [[ "${VISIONINSPECT_OFFLINE_INSTALL:-0}" == 1 ]]; then
+    sources=(--no-index --find-links "$VISIONINSPECT_WHEELHOUSE")
+  fi
 fi
 "$gpu_python" -m pip --isolated --cache-dir "$PIP_CACHE_DIR" install "${sources[@]}" --require-hashes --only-binary=:all: -r requirements-vllm.txt 2>&1 | tee logs/gpu-vllm-install.log
 "$gpu_python" -m pip check
