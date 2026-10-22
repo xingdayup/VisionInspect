@@ -4,7 +4,9 @@ models:
     label: 瓶口
     patchcore:
       data_root: data/mvtec_ad/bottle
-      fit_run: outputs/20261021-232056-fit-ae72d8
+      # GPU 拟合（2026-10-22）。旧 CPU checkpoint 仍保留在 outputs/20261021-232056-fit-ae72d8，
+      # 对应 profile 与参考索引不删除，可直接改回这三行做对照。
+      fit_run: outputs/20261022-232712-fit-e0b23e
       config: configs/patchcore.yaml
-      profile: weights/profiles/bottle.json
-      references: weights/profiles/bottle-references.npz
+      profile: weights/profiles/bottle-gpu-20261022.json
+      references: weights/profiles/bottle-gpu-20261022-references.npz
