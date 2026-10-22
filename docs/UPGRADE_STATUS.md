@@ -217,3 +217,9 @@ PatchCore 只在 `train/good` 上建立 memory bank，训练与校准阶段没�
 复核用的局部裁剪直接来自异常热图，尺寸常常只有 50–70 像素（单元测试里就出现过 64×72）。这样的图送进 VLM，"看不清"几乎是必然结果，与提示词无关。
 
 现在发送前统一把最短边不足 256 像素的证据放大到 256（保持长宽比，LANCZOS）。**这不增加信息**，只是消除"给模型的图比模型能看的还小"这个人为劣势；实际发送尺寸仍记录在 `vlm_input/round_*/request.json` 的 audit 里，便于事后核对。
+
+### 拒绝原因改为机器可读
+
+报告新增 `agent_review.gates`，把中文拒绝原因映射成稳定代码（`region_unreviewed`、`regions_truncated`、`anomaly_conflict`、`no_normal_evidence`、`reference_similarity`、`no_final_decision`、`model_failure`）。理由文本面向人，代码面向统计。
+
+实验脚本的汇总里新增 `rejection_gates`，下次真机跑完可以直接按原因分组，不必再靠通读中文原因去猜是哪条门控拦住的——这轮排查就是靠人工读原因，花了很久。

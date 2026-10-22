@@ -87,6 +87,7 @@ def score_row(record, baseline, agent, band, threshold):
         model_calls=0,
         review_status=None,
         review_reasons=None,
+        gates=[],
     )
     if agent is not None:
         review = review_of(agent)
@@ -96,6 +97,7 @@ def score_row(record, baseline, agent, band, threshold):
             model_calls=review.get("calls", 0),
             review_status=review.get("status"),
             review_reasons=review.get("reasons"),
+            gates=list(review.get("gates") or []),
         )
     return row
 
@@ -160,6 +162,9 @@ def summarize(rows, band):
         model_calls_total=sum(calls),
         model_calls_max=max(calls) if calls else 0,
         review_seconds_mean=(sum(seconds) / len(seconds)) if seconds else None,
+        rejection_gates=sorted(
+            {code for row in reviewed for code in (row.get("gates") or [])}
+        ),
         changed_paths=[row["path"] for row in changed],
         label_note="Labels only score the outcome; nothing here tunes a threshold or the band",
     )
@@ -275,6 +280,7 @@ def main():
                 "model_calls",
                 "baseline_seconds",
                 "agent_seconds",
+                "gates",
             ],
             extrasaction="ignore",
         )

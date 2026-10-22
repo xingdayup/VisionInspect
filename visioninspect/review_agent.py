@@ -29,6 +29,30 @@ if TYPE_CHECKING:
     from .vllm_client import VLLMClient
 
 
+GATE_CODES = {
+    "尚有未完成正常局部核查的疑似区域": "region_unreviewed",
+    "疑似区域数量超过提取上限": "regions_truncated",
+    "正常结论与已记录异常观察冲突": "anomaly_conflict",
+    "最终观察未形成明确的正常视觉依据": "no_normal_evidence",
+    "正常参考相似度低于冻结策略下限": "reference_similarity",
+    "复核证据不足，Agent 未给出可接受的结论": "no_final_decision",
+    "异常结论缺少可见异常观察": "anomaly_unobserved",
+    "整体异常结论与已检查局部证据冲突": "local_conflict",
+}
+
+
+def gate_codes(reasons, failure):
+    """Map human-readable rejection reasons to stable machine codes.
+
+    Reports stay readable, while an experiment can group rejections without
+    matching on Chinese prose that is free to change.
+    """
+    codes = [GATE_CODES.get(reason, "other") for reason in reasons]
+    if failure:
+        codes.insert(0, "model_failure")
+    return codes
+
+
 def truncation_blocks_normal(policy: dict, regions_output: dict) -> bool:
     """Decide whether an unextracted region must veto a normal verdict.
 
@@ -482,6 +506,11 @@ class ReviewAgent:
                 rule_version=REVIEW_RULE_VERSION,
                 reasons=reasons,
             ).model_dump()
+            gates = (
+                gate_codes(reasons, self.failure)
+                if final_state == "manual_review"
+                else []
+            )
             self.report["agent_review"] = dict(
                 status="failed" if self.failure else "completed",
                 calls=self.calls,
@@ -493,6 +522,7 @@ class ReviewAgent:
                 policy_version=REVIEW_RULE_VERSION,
                 backend=self.client.backend,
                 reasons=reasons,
+                gates=gates,
             )
         self.report.update(
             notice="研究质检候选结果，Agent 复核与人工记录独立保存；不构成工业放行授权。",

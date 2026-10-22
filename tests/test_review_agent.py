@@ -5,7 +5,11 @@ import yaml
 from PIL import Image
 
 from visioninspect.common import ROOT, read_json
-from visioninspect.review_agent import ReviewAgent, truncation_blocks_normal
+from visioninspect.review_agent import (
+    ReviewAgent,
+    gate_codes,
+    truncation_blocks_normal,
+)
 from visioninspect.review_contracts import REVIEW_PROMPT, ReviewDecision
 from visioninspect.schemas import FinalizeInput
 from visioninspect.tools import ToolFailure, ToolKit
@@ -360,3 +364,23 @@ def test_prompt_keeps_the_judgeable_parts():
     assert "remaining_regions" in REVIEW_PROMPT
     assert "最后手段" in REVIEW_PROMPT
     assert "重复请求" in REVIEW_PROMPT
+
+
+def test_gate_codes_are_machine_readable_and_prefix_failures():
+    codes = gate_codes(["疑似区域数量超过提取上限", "未分类的原因"], "boom")
+    assert codes[0] == "model_failure"
+    assert "regions_truncated" in codes
+    assert "other" in codes
+
+
+def test_accepted_review_records_no_rejection_gates(tmp_path):
+    """A concluded review has nothing to explain, so its gate list stays empty."""
+    report, _ = run(
+        tmp_path,
+        [
+            decision("compare_region", "unknown", "R1", 1),
+            decision(local=True),
+        ],
+    )
+    assert report["result"]["state"] == "normal_candidate"
+    assert report["agent_review"]["gates"] == []
