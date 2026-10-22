@@ -5,6 +5,7 @@
 - [迁移](MIGRATION_PAI.md)：Git bundle、校验资产、Linux GPU 运行。
 - [同机部署](DEPLOY_SAME_HOST.md)：应用与两个模型同机时的拓扑边界、部署判据与故障对照。
 - [当前验证](UPGRADE_STATUS.md)：真实完成与待 GPU 验证事项。
+- [原始需求稿](../VisionInspect-Agent_交接文档_含前端要求.md)：最初的技术调研与前端要求，保留原文并标注与当前实现的差异。
 - [数据许可](DATASETS.md)、[第三方来源](THIRD_PARTY.md)。
 - [产品设计](design/PRODUCT.md)、[界面规范](design/DESIGN.md)。
 

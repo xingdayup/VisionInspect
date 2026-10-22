@@ -1,5 +1,16 @@
 # VisionInspect-Agent 项目交接文档
 
+> **阅读提示（2026-10-22 更新）**
+> 本文是最初的需求与技术调研稿，保留原文作为项目来源，不再逐条修订。
+> 当前执行范围以 [README](README.md)、[AGENT](AGENT.md) 和 [docs/](docs/README.md) 为准。
+> 与本稿相比已经落定的差异：
+>
+> - **环境**：最终使用两个 `python -m venv` 隔离环境（项目 `.venv` 与 GPU 资产根目录 `.venv`），不使用 conda 环境；conda 仅作为创建 venv 的母体解释器，不向其安装项目依赖。
+> - **模型**：PatchCore 已迁移到 CUDA FP32；CPU SmolVLM、EfficientAD、fixed/dynamic 流程移出当前产品，历史实现见 Git 标签 `pre-gpu-only-20261022`。
+> - **运行前提**：仅支持 Linux NVIDIA GPU，无 CUDA 明确失败；候选结果、Agent 复核与人工记录分别保存。
+> - **数据集**：当前只注册 MVTec AD `bottle`。
+> - **部署**：全新服务器使用单一入口 `scripts/deploy_fresh_gpu.sh`，见 [同机部署](docs/DEPLOY_SAME_HOST.md)。
+
 **文档用途：** 将项目背景、目标、技术路线和工程约束交接给执行型 Agent。\
 **当前阶段：**
 项目定义与技术调研已完成初稿；先核验开源项目和数据集，再制定实施计划。除非用户明确要求，不要一上来就大规模写代码或下载全部数据。
@@ -249,6 +260,8 @@ VLM 输出的文字流畅度当成分类准确率。
 
 -   使用项目独立环境，例如 `conda` 环境 `visioninspect-agent` 或项目专属
     `.venv`；根据当前系统与硬件选择，不要同时无必要地维护多套环境。
+    （实际实现：两个 `python -m venv` 隔离环境，不使用 conda 环境；见
+    `scripts/setup_gpu.sh`、`scripts/setup_vllm.sh`。）
 -   不要在 `base` 环境中安装项目依赖。
 -   不要全局升级 Python、PyTorch、CUDA、系统包或驱动。
 -   不要覆盖其他项目已有的环境、依赖或配置。
