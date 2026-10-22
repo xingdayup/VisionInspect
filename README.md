@@ -10,7 +10,7 @@
 - 原图、浮点异常图、热图叠加、局部裁剪、正常训练参考和实际 VLM 输入。
 - 原始模型、Agent、人工三层记录；历史查询、JSON/CSV 导出。
 - PatchCore-ResNet18：CUDA、FP32、256×256、layer2/layer3；没有 CPU 推理回退。
-- LangGraph：不确定区间触发复核，选择局部对比、切换参考或结束，最多 5 次模型调用（含重试）。
+- LangGraph：不确定区间触发复核，选择局部对比、切换参考或结束，最多 6 次模型调用（含重试）。
 - vLLM：本地 Qwen3-VL-8B-Instruct BF16，模型端口仅监听 127.0.0.1:8001。
 - FastAPI / SQLite / React / TypeScript / Vite；单 API worker，串行任务，两个模型进程独立空闲 TTL 600 秒。
 

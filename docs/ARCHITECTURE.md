@@ -20,7 +20,7 @@ PatchCore 只用 `train/good` 建立 memory bank，训练与校准阶段没有�
 
 ## 约束与证据
 
-整体观察引用待检原图，正常整体观察同时引用本轮正常参考。局部观察引用待检裁剪与参考对应坐标裁剪。模型只能选择 `compare_region`、`compare_reference`、`finish`，最多 5 次尝试，含重试。不接受未提供的证据、重复视图、遗漏区域或冲突结论。
+整体观察引用待检原图，正常整体观察同时引用本轮正常参考。局部观察引用待检裁剪与参考对应坐标裁剪。模型只能选择 `compare_region`、`compare_reference`、`finish`，最多 6 次尝试，含重试。不接受未提供的证据、重复视图、遗漏区域或冲突结论。
 
 LangGraph 使用 baseline / decide / tool / finish 节点。运行中的状态由对象与图管理；SQLite 持久化任务和报告，不宣称已经实现 LangGraph checkpointer 的轮次断点续跑。重启后执行中任务标记失败，批次暂停，队列保留。
 
