@@ -117,7 +117,7 @@ TOOL_CONTRACTS = {
     "finalize_inspection": (FinalizeInput, FinalResult),
 }
 
-# Upper bound for the review loop's model budget. A verdict needs one call per
-# extracted region, plus one global look, plus one finish: the region cap is 4,
-# so anything below 6 makes a four-region image impossible to conclude.
-MAX_REVIEW_MODEL_CALLS = 6
+# Upper bound for the review loop's model budget. Worst case for one image:
+# one global look + one call per extracted region (capped at 4) + one finish,
+# plus one corrective call for a repeated view and one for a malformed reply.
+MAX_REVIEW_MODEL_CALLS = 8
