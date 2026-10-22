@@ -167,9 +167,29 @@ def test_fabricated_evidence_is_rejected(tmp_path):
     )
 
 
-def test_repeated_view_and_call_budget_stop(tmp_path):
-    report, _ = run(tmp_path, [decision("compare_reference", "unknown", reference=1)])
-    assert report["vlm_calls"] == 1 and "重复" in "".join(report["result"]["reasons"])
+def test_repeated_view_gets_one_corrective_call_then_stops(tmp_path):
+    """A repeated view is a planning slip, so it earns exactly one retry."""
+    repeated = decision("compare_reference", "unknown", reference=1)
+    report, _ = run(tmp_path, [repeated, repeated])
+    assert report["vlm_calls"] == 2
+    assert any(row["tool"] == "duplicate_view" for row in report["trace"])
+    assert "重复" in "".join(report["result"]["reasons"])
+
+
+def test_corrective_call_lets_the_model_finish(tmp_path):
+    """After a duplicate, the model still gets to submit its finish decision."""
+    report, _ = run(
+        tmp_path,
+        [
+            decision("compare_reference", "unknown", reference=1),
+            decision(),
+        ],
+    )
+    reasons = "".join(report["result"]["reasons"])
+    assert report["vlm_calls"] == 2
+    assert "重复" not in reasons
+    # The region gate still applies: a normal verdict needs the region checked.
+    assert "局部核查" in reasons
 
 
 def test_transport_retry_is_bounded_and_detection_evidence_survives(tmp_path):

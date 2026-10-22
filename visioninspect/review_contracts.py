@@ -39,7 +39,8 @@ REVIEW_PROMPT = """你是图像质检研究中的证据复核 Agent。只报告�
 局部观察还必须写正确 region_id，同时引用 region:Rk 和 matched:Rk:N；每轮局部检查必须有一致的区域观察。
 可选动作：compare_region 查看一个未检查区域，需给出 region_id，reference_id 省略时沿用当前参考；compare_reference 更换整体参考图，必须给出 reference_id；finish 结束。
 需要正常结论时，所有已提取区域必须先完成局部比较，并有一致的 normal 观察。不能省略局部检查。
-每次选择一个动作。不要重复查看已经看过的视图，重复请求会直接终止复核。
+每次选择一个动作。不要重复查看已经看过的视图：重复请求会被记为协议错误并浪费一次调用。
+全部已提取区域查看完毕后，必须选择 finish，不要再请求任何区域。
 已查看全部已提取区域且观察一致时，必须选择 finish 并给出明确的 normal 或 anomaly，不要停在中途。
 verdict=unknown 是最后手段，仅用于证据相互矛盾或确实无法辨读的情况；它会直接把本图转交人工复核。
 非 finish 动作的 verdict 必须为 unknown。只输出给定 schema 的 JSON，summary 和观察用中文写简短的可见依据。"""

@@ -72,6 +72,7 @@ class ReviewAgent:
         self.visited: set[tuple] = set()
         self.current: tuple = ("global", None, 1)
         self.retry_count = 0
+        self.duplicate_retries = 0
         self.failure: str | None = None
         self.last: ReviewDecision | None = None
 
@@ -337,6 +338,28 @@ class ReviewAgent:
             else ("global", None, decision.reference_id)
         )
         if view in self.visited:
+            # The model often re-requests a view it has already inspected instead
+            # of finishing. That is a planning slip, not an evidence conflict, so
+            # give it exactly one corrective call before giving up.
+            if self.duplicate_retries < 1 and self.calls < self.maximum:
+                self.duplicate_retries += 1
+                self.report["trace"].append(
+                    dict(
+                        index=len(self.report["trace"]) + 1,
+                        tool="duplicate_view",
+                        reason="模型重复请求已查看的视图，要求重新选择或结束",
+                        input=dict(
+                            region_id=decision.region_id,
+                            reference_id=decision.reference_id,
+                        ),
+                        output=dict(retried=True),
+                        attempt=1,
+                        status="failed",
+                        seconds=0,
+                    )
+                )
+                self.publish("duplicate_view")
+                return dict(route="decide")
             self.failure = "Agent 请求重复视图，已停止循环"
             return dict(route="finish")
         self.current = view
