@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 from PIL import Image, ImageOps
+from pydantic import ValidationError
 
 from .common import sha256, write_json
 from .review_contracts import REVIEW_PROMPT, ReviewDecision
@@ -17,6 +18,32 @@ from .tools import ToolFailure
 MAX_RESPONSE_BYTES = 1024**2
 THUMBNAIL_SIDE = 512
 MAX_EVIDENCE_IMAGES = 3
+
+
+def _json_object(text: str) -> str | None:
+    """Return the outermost JSON object in text, tolerating fences and prose."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    return text[start : end + 1]
+
+
+def parse_decision(content: str) -> tuple[ReviewDecision, bool]:
+    """Parse one structured decision, repairing fences or stray prose once.
+
+    Small models often wrap valid JSON in markdown fences or add a sentence
+    around it. Rejecting those costs a full retry and, on a four-region image,
+    the whole review; extracting the object keeps the contract intact because
+    the payload still has to validate against the schema.
+    """
+    try:
+        return ReviewDecision.model_validate_json(content), False
+    except (ValidationError, ValueError):
+        repaired = _json_object(content)
+        if repaired is None:
+            raise
+        return ReviewDecision.model_validate_json(repaired), True
 
 
 class VLLMClient:
@@ -133,13 +160,12 @@ class VLLMClient:
                             raise ToolFailure("schema_error", "VLM 响应超过 1 MiB")
             raw = json.loads(body)
             write_json(directory / "response.json", raw)
-            decision = ReviewDecision.model_validate_json(
-                raw["choices"][0]["message"]["content"]
-            )
+            decision, repaired = parse_decision(raw["choices"][0]["message"]["content"])
             return decision, dict(
                 seconds=time.monotonic() - started,
                 usage=raw.get("usage", {}),
                 backend=self.backend,
+                schema_repaired=repaired,
                 input_images=[
                     dict(item, path=f"vlm_input/{directory.name}/{item['path']}")
                     for item in audit

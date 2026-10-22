@@ -14,8 +14,9 @@ from PIL import Image
 
 from scripts.pai_vllm import MODEL, REVISION, validate_source
 from visioninspect.common import offline, read_json, write_json
+from visioninspect.review_contracts import ReviewDecision
 from visioninspect.tools import ToolFailure
-from visioninspect.vllm_client import VLLMClient
+from visioninspect.vllm_client import VLLMClient, parse_decision
 from visioninspect.vllm_runtime import VLLMRuntime, gpu_assets_available, gpu_config
 
 
@@ -233,3 +234,38 @@ def test_spawned_runtime_guard_blocks_external_python_connections():
         timeout=10,
     )
     assert result.returncode != 0 and "denies external network" in result.stderr
+
+
+def _payload() -> str:
+    return ReviewDecision(
+        observations=[
+            dict(text="边缘与纹理一致", evidence_ids=["original"], finding="normal")
+        ],
+        action="finish",
+        verdict="normal",
+        summary="无可见差异",
+    ).model_dump_json()
+
+
+def test_plain_json_needs_no_repair():
+    decision, repaired = parse_decision(_payload())
+    assert decision.verdict == "normal"
+    assert repaired is False
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        lambda body: f"```json\n{body}\n```",
+        lambda body: f"复核结果如下：\n{body}\n以上。",
+    ],
+)
+def test_fenced_or_wrapped_json_is_repaired_once(wrapper):
+    decision, repaired = parse_decision(wrapper(_payload()))
+    assert decision.verdict == "normal"
+    assert repaired is True
+
+
+def test_text_without_an_object_still_fails():
+    with pytest.raises(ValueError):
+        parse_decision("无法判断，没有给出结构化结果。")
