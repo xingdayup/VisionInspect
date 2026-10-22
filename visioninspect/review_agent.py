@@ -73,6 +73,7 @@ class ReviewAgent:
         self.current: tuple = ("global", None, 1)
         self.retry_count = 0
         self.duplicate_retries = 0
+        self.pending_nudge: str | None = None
         self.failure: str | None = None
         self.last: ReviewDecision | None = None
 
@@ -294,7 +295,12 @@ class ReviewAgent:
                     o for item in self.rounds for o in item.get("observations", [])
                 ],
                 calls_remaining_after_this=self.maximum - self.calls,
+                # ReCoVERR (arXiv:2402.15610): an abstention is better spent on a
+                # narrower question than on handing the case to a human.
+                abstention_nudge=self.pending_nudge,
             )
+            # The nudge applies to exactly one follow-up call.
+            self.pending_nudge = None
             decision, metrics = self.client.decide(
                 context, images, self.tools.output / "vlm_input" / f"round_{self.calls}"
             )
@@ -316,8 +322,12 @@ class ReviewAgent:
             if decision.action == "finish":
                 if self.silent_abstention(decision):
                     # Every region was checked and nothing abnormal was seen, yet
-                    # the model still abstains. Ask once for the conclusion it is
-                    # already holding instead of defaulting the case to a human.
+                    # the model still abstains. Ask once, in the context, for the
+                    # conclusion it is already holding.
+                    self.pending_nudge = (
+                        "全部疑似区域均已比对且未见异常。请直接给出 verdict=normal "
+                        "或 verdict=anomaly 的 finish 结论，不要再用 unknown。"
+                    )
                     raise ToolFailure(
                         "schema_error",
                         "已查看全部区域且无异常观察，请给出 normal 或 anomaly 结论",

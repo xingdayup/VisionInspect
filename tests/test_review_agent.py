@@ -335,3 +335,19 @@ def test_silent_abstention_gets_one_request_for_a_conclusion(tmp_path):
     )
     assert report["vlm_calls"] == 3
     assert report["result"]["state"] == "normal_candidate"
+
+
+def test_abstention_nudge_is_sent_exactly_once(tmp_path):
+    """The follow-up question reaches the retry, not every later call."""
+    report, client = run(
+        tmp_path,
+        [
+            decision("compare_region", "unknown", "R1", 1),
+            decision("finish", "unknown", local=True),
+            decision(local=True),
+        ],
+    )
+    assert report["vlm_calls"] == 3
+    # call 1 selects the region, call 2 abstains, call 3 carries the follow-up.
+    assert client.inputs[1][0]["abstention_nudge"] is None
+    assert "unknown" in client.inputs[2][0]["abstention_nudge"]
