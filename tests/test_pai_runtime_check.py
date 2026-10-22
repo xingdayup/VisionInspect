@@ -109,10 +109,13 @@ def test_download_rejects_a_failed_runtime_check(tmp_path):
         pai_vllm.download(tmp_path)
 
 
-def test_server_environment_puts_the_interpreter_bin_on_path(monkeypatch):
+def test_server_environment_puts_the_venv_bin_on_path(monkeypatch):
+    # The interpreter is a symlink to the base install, so the venv bin must be
+    # taken from sys.prefix rather than from the resolved executable.
     monkeypatch.setenv("PATH", "/usr/bin")
     entries = pai_vllm.server_environment()["PATH"].split(os.pathsep)
-    assert entries[0] == str(Path(sys.executable).resolve().parent)
+    expected = Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin")
+    assert entries[0] == str(expected)
     assert entries[-1] == "/usr/bin"
 
 

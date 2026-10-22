@@ -358,7 +358,10 @@ def server_environment():
     CUDA toolkit bin directory is included for the same reason.
     """
     guard = str(Path(__file__).resolve().parent / "runtime_guard")
-    parts = [str(Path(sys.executable).resolve().parent)]
+    # sys.executable is a symlink to the base interpreter, so resolving it would
+    # put the base bin directory on PATH instead of the venv that owns ninja.
+    venv_bin = Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin")
+    parts = [str(venv_bin)]
     toolkit = cuda_toolkit_bin()
     if toolkit:
         parts.append(toolkit)
