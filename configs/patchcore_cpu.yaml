@@ -1,0 +1,38 @@
+schema_version: 1
+dataset:
+  name: mvtec_ad
+  category: bottle
+  root: data/mvtec_ad/bottle
+  manifest: data/manifests/bottle.json
+  image_size: 900
+  expected_train: 209
+  expected_test_good: 20
+  expected_test_anomaly: 63
+  defects: [broken_large, broken_small, contamination]
+  validation_ratio: 0.2
+model:
+  backbone: resnet18.a1_in1k
+  layers: [layer2, layer3]
+  weights: weights/resnet18.a1_in1k/model.safetensors
+  weights_metadata: weights/resnet18.a1_in1k/source.json
+  image_size: 256
+  coreset_sampling_ratio: 0.01
+  num_neighbors: 9
+runtime:
+  seed: 42
+  device: cpu
+  precision: float32
+  threads: 4
+  batch_size: 1
+  num_workers: 0
+  memory_limit_gib: 12
+  smoke_timeout_seconds: 600
+  fit_timeout_seconds: 3600
+  calibrate_timeout_seconds: 900
+  evaluate_timeout_seconds: 900
+evaluation:
+  quantile: 0.95
+  quantile_method: higher
+  aupro_fpr_limit: 0.3
+  warmup: 5
+outputs: outputs

@@ -1,0 +1,16 @@
+.venv
+.cache
+.tmp
+data
+weights
+outputs
+logs
+.env*
+!.env.example
+.git
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.py[cod]
+**/*.log
+.pytest_cache

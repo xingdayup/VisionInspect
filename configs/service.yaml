@@ -1,0 +1,3 @@
+schema_version: 1
+# An idle worker exits completely; the next request starts a new one.
+idle_ttl_seconds: 600

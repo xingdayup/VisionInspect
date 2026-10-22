@@ -1,0 +1,10 @@
+schema_version: 1
+models:
+  bottle:
+    label: 瓶口
+    patchcore:
+      data_root: data/mvtec_ad/bottle
+      fit_run: outputs/20261021-232056-fit-ae72d8
+      config: configs/patchcore_cpu.yaml
+      profile: weights/profiles/bottle.json
+      references: weights/profiles/bottle-references.npz
