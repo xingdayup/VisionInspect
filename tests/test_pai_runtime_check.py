@@ -1,5 +1,6 @@
 """Probe control-flow regression with fake packages; no GPU compatibility claim."""
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -126,3 +127,28 @@ def test_cuda_toolkit_bin_is_used_only_when_nvcc_exists(tmp_path, monkeypatch):
     assert pai_vllm.cuda_toolkit_bin() is None
     (fake / "bin/nvcc").write_text("", encoding="utf8")
     assert pai_vllm.cuda_toolkit_bin() == str(fake / "bin")
+
+
+def test_download_verifies_cached_assets_without_network(tmp_path, monkeypatch):
+    """A complete asset set must be re-checked locally, never re-downloaded."""
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs/runtime-check.json").write_text('{"passed": true}', "utf8")
+    report = dict(
+        files=[dict(rfilename="config.json", size=1, blobId="deadbeef")],
+        artifact_bytes=1,
+    )
+    (tmp_path / "logs/model-preflight.json").write_text(json.dumps(report), "utf8")
+    monkeypatch.setattr(pai_vllm, "verified", lambda path, item: True)
+    monkeypatch.setattr(
+        pai_vllm,
+        "preflight",
+        lambda *args, **kwargs: pytest.fail("network must not be touched"),
+    )
+
+    pai_vllm.download(tmp_path)
+
+    source = json.loads(
+        (tmp_path / "weights/qwen3-vl-8b-instruct/source.json").read_text("utf8")
+    )
+    assert source["model"] == pai_vllm.MODEL
+    assert source["files"] == report["files"]

@@ -1,4 +1,5 @@
 import copy
+import os
 
 import numpy as np
 import pytest
@@ -7,6 +8,13 @@ from PIL import Image
 from visioninspect.common import ROOT, configure_environment, load_config
 
 configure_environment()
+
+# LangGraph emits LangSmith traces whenever a key is present in the host
+# environment; tests must never attempt a network upload.
+for name in ("LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2", "LANGSMITH_API_KEY"):
+    os.environ.pop(name, None)
+os.environ["LANGSMITH_TRACING"] = "false"
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
 
 
 @pytest.fixture(autouse=True)

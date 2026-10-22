@@ -257,7 +257,29 @@ def resolve_root(value):
     return Path(configured).resolve()
 
 
+def write_source(directory, report):
+    """Record the verified asset manifest; call only after every file matched."""
+    write(
+        directory / "source.json",
+        dict(
+            model=MODEL,
+            revision=REVISION,
+            license="Apache-2.0",
+            artifact_bytes=report["artifact_bytes"],
+            files=report["files"],
+        ),
+    )
+    print("ASSETS_READY", directory, flush=True)
+
+
 def download(root, minimum_free_gib=50):
+    """Ensure every pinned asset is present, verified, and recorded.
+
+    A complete asset set is accepted without touching the network: re-checking
+    finished weights must not depend on Hugging Face reachability, and it must
+    not be blocked by the pre-download disk budget, which only exists to protect
+    a download that has not happened yet.
+    """
     marker = root / "logs/runtime-check.json"
     if not marker.is_file():
         raise RuntimeError(
@@ -268,12 +290,21 @@ def download(root, minimum_free_gib=50):
         raise RuntimeError(
             "Runtime check did not pass; re-run bash scripts/setup_vllm.sh"
         )
-    preflight(root, minimum_free_gib)
-    report = read(root / "logs/model-preflight.json")
-    from huggingface_hub import hf_hub_download
-
     directory = model_dir(root)
     directory.mkdir(parents=True, exist_ok=True)
+    cached = root / "logs/model-preflight.json"
+    report = read(cached) if cached.is_file() else None
+    if report is not None and all(
+        verified(directory / item["rfilename"], item) for item in report["files"]
+    ):
+        for item in report["files"]:
+            print("VERIFIED", item["rfilename"], item["size"], flush=True)
+        write_source(directory, report)
+        return
+    from huggingface_hub import hf_hub_download
+
+    preflight(root, minimum_free_gib)
+    report = read(cached)
     for item in report["files"]:
         path = directory / item["rfilename"]
         if not verified(path, item):
@@ -291,17 +322,7 @@ def download(root, minimum_free_gib=50):
         if shutil.disk_usage(root).free < 8 * 1024**3:
             raise RuntimeError("Model download reached the 8 GiB disk reserve")
         print("VERIFIED", item["rfilename"], item["size"], flush=True)
-    write(
-        directory / "source.json",
-        dict(
-            model=MODEL,
-            revision=REVISION,
-            license="Apache-2.0",
-            artifact_bytes=report["artifact_bytes"],
-            files=report["files"],
-        ),
-    )
-    print("ASSETS_READY", directory, flush=True)
+    write_source(directory, report)
 
 
 def server_command(root):

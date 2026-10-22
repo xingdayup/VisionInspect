@@ -77,31 +77,25 @@ if [[ ! -x "$gpu_python" ]]; then
 fi
 
 stage "4/6  pinned model assets"
-model_dir="$gpu_root/weights/qwen3-vl-8b-instruct"
-complete=1
-for name in model-00001-of-00004.safetensors model-00002-of-00004.safetensors \
-            model-00003-of-00004.safetensors model-00004-of-00004.safetensors source.json
-do
-  [[ -f "$model_dir/$name" ]] || complete=0
-done
+# download is idempotent: with a complete asset set it verifies locally, writes
+# source.json and returns without touching the network, so it is always safe to
+# call here even when the weights arrived by another route.
 if [[ "${SKIP_MODEL_DOWNLOAD:-0}" == 1 ]]; then
   note 'skip: SKIP_MODEL_DOWNLOAD=1'
-elif [[ $complete -eq 1 ]]; then
-  note 'skip: all four shards and source.json are present'
 else
-  if ! "$gpu_python" - <<'PROBE'
+  if [[ ! -f "$gpu_root/logs/model-preflight.json" ]]; then
+    if ! "$gpu_python" - <<'PROBE'
 import urllib.request
 
 with urllib.request.urlopen("https://huggingface.co", timeout=15) as response:
     response.read(1)
 PROBE
-  then
-    echo 'Hugging Face is unreachable from this machine.' >&2
-    echo 'On AutoDL run "source /etc/network_turbo" in this shell, then retry.' >&2
-    exit 1
+    then
+      echo 'Hugging Face is unreachable and no cached preflight record exists.' >&2
+      echo 'On AutoDL run "source /etc/network_turbo" in this shell, then retry.' >&2
+      exit 1
+    fi
   fi
-  "$gpu_python" -B scripts/pai_vllm.py preflight \
-    --root "$gpu_root" --minimum-free-gib "$minimum_free_gib"
   "$gpu_python" -B scripts/pai_vllm.py download \
     --root "$gpu_root" --minimum-free-gib "$minimum_free_gib"
 fi

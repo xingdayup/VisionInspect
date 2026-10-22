@@ -10,6 +10,7 @@ logs/
 .env.*
 !.env.example
 __pycache__/
+.ipynb_checkpoints/
 *.py[cod]
 .pytest_cache/
 *.egg-info/
