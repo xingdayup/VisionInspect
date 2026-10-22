@@ -239,9 +239,35 @@ def validate_source(root):
     return source
 
 
+def resolve_root(value):
+    """Resolve the GPU asset root from --root, then VISIONINSPECT_GPU_ROOT.
+
+    There is deliberately no built-in default path: a stale PAI path would
+    create an empty directory on a fresh machine's system disk and only fail
+    much later, after environments and weights had been written elsewhere.
+    """
+    if value is not None:
+        return Path(value).resolve()
+    configured = os.environ.get("VISIONINSPECT_GPU_ROOT")
+    if not configured:
+        raise ValueError(
+            "Set VISIONINSPECT_GPU_ROOT or pass --root; on AutoDL run: "
+            "source scripts/env_autodl.sh"
+        )
+    return Path(configured).resolve()
+
+
 def download(root, minimum_free_gib=50):
-    if not read(root / "logs/runtime-check.json").get("passed"):
-        raise RuntimeError("Run check first")
+    marker = root / "logs/runtime-check.json"
+    if not marker.is_file():
+        raise RuntimeError(
+            "runtime-check.json is missing: install the vLLM environment first "
+            "(bash scripts/setup_vllm.sh runs the native check for you)"
+        )
+    if not read(marker).get("passed"):
+        raise RuntimeError(
+            "Runtime check did not pass; re-run bash scripts/setup_vllm.sh"
+        )
     preflight(root, minimum_free_gib)
     report = read(root / "logs/model-preflight.json")
     from huggingface_hub import hf_hub_download
@@ -520,7 +546,10 @@ if __name__ == "__main__":
         choices=["check", "preflight", "download", "command", "serve", "probe"],
     )
     parser.add_argument(
-        "--root", type=Path, default=Path("/mnt/systemDisk/VisionInspect-GPU")
+        "--root",
+        type=Path,
+        default=None,
+        help="GPU asset root; falls back to VISIONINSPECT_GPU_ROOT",
     )
     parser.add_argument("--seconds", type=int, default=900)
     parser.add_argument("--image", type=Path)
@@ -531,7 +560,10 @@ if __name__ == "__main__":
         help="Explicitly approved model disk budget; retains at least 8 GiB",
     )
     args = parser.parse_args()
-    root = args.root.resolve()
+    try:
+        root = resolve_root(args.root)
+    except ValueError as error:
+        parser.error(str(error))
     if not 1 <= args.seconds <= 3600:
         parser.error("--seconds must be between 1 and 3600")
     if args.command == "probe" and args.image is None:

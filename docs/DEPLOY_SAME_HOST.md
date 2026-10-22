@@ -3,6 +3,18 @@
 本文回答三件事：**这个拓扑在哪条边界上成立、部署完成怎么判定、出问题该查哪里。**
 逐条安装命令见 [迁移说明](MIGRATION_PAI.md) 与根 [README](../README.md) 的服务器准备一节的对应步骤。
 
+## 0. 全新服务器：单一入口
+
+两个环境都不存在时，用脚本而不是手工按顺序敲命令，顺序错了会在第 4 步才暴露：
+
+```bash
+bash scripts/deploy_fresh_gpu.sh
+```
+
+它依次执行审计、检查已上传资产、建立应用 `.venv`、建立 vLLM 环境并跑原生检查、探测 Hugging Face 可达性、预检与下载权重、两项验收，最后打印启动命令。可覆盖的变量：`BOOTSTRAP_PYTHON`、`APP_DOWNLOAD_BUDGET_BYTES`、`VLLM_DOWNLOAD_BUDGET_BYTES`、`MINIMUM_FREE_GIB`、`SKIP_MODEL_DOWNLOAD=1`、`SKIP_VERIFY=1`。
+
+`pai_vllm.py` 不再有内置默认根目录：它读 `--root`，其次读 `VISIONINSPECT_GPU_ROOT`，两者都没有时立刻报错，不会在系统盘上建出空的旧 PAI 路径。
+
 ## 1. 拓扑边界
 
 当前代码把"本机"写死在四处，因此**应用、PatchCore、vLLM 必须同机**才能开箱运行：

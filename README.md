@@ -28,6 +28,17 @@
 
 目标是 Linux x86_64 / Python 3.12 / CUDA 13 PyTorch 2.13.0 + torchvision 0.28.0；vLLM 运行时固定 0.27.1。已有 A10 24 GiB 作为候选硬件，完整两模型显存占用待实测。
 
+**全新服务器**（两个环境都不存在、vLLM 未安装）请直接使用单一入口，它按正确顺序执行审计、建环境、下载权重和验收：
+
+```bash
+git clone https://github.com/xingdayup/VisionInspect.git /root/autodl-tmp/VisionInspect
+cd /root/autodl-tmp/VisionInspect
+bash scripts/deploy_fresh_gpu.sh          # 自动加载 scripts/env_autodl.sh
+PORT=6006 bash scripts/start_gpu.sh
+```
+
+资产（数据、weight、checkpoint、前端构建）不在 Git 内，需先上传；脚本第 1 阶段会逐项检查并在缺失时停止。以下分步说明适用于已有 vLLM 的旧服务器，或需要手工控制每一步的场景。
+
 1. 将代码放入服务器项目目录，按 [迁移说明](docs/MIGRATION_PAI.md) 恢复校验资产。
 2. 运行只读审计及依赖预检：
 

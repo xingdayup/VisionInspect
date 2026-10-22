@@ -76,3 +76,32 @@ def test_native_extension_failure_is_not_hidden(tmp_path, monkeypatch, error):
     with pytest.raises(type(error), match=str(error)):
         pai_vllm.check(tmp_path)
     assert not (tmp_path / "logs/runtime-check.json").exists()
+
+
+def test_root_comes_from_environment_when_flag_is_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv("VISIONINSPECT_GPU_ROOT", str(tmp_path / "gpu"))
+    assert pai_vllm.resolve_root(None) == (tmp_path / "gpu").resolve()
+
+
+def test_explicit_root_wins_over_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("VISIONINSPECT_GPU_ROOT", str(tmp_path / "gpu"))
+    explicit = tmp_path / "explicit"
+    assert pai_vllm.resolve_root(explicit) == explicit.resolve()
+
+
+def test_root_without_flag_or_environment_is_rejected(monkeypatch):
+    monkeypatch.delenv("VISIONINSPECT_GPU_ROOT", raising=False)
+    with pytest.raises(ValueError, match="VISIONINSPECT_GPU_ROOT"):
+        pai_vllm.resolve_root(None)
+
+
+def test_download_explains_missing_runtime_check_before_any_network_call(tmp_path):
+    with pytest.raises(RuntimeError, match="setup_vllm"):
+        pai_vllm.download(tmp_path)
+
+
+def test_download_rejects_a_failed_runtime_check(tmp_path):
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs/runtime-check.json").write_text('{"passed": false}', "utf8")
+    with pytest.raises(RuntimeError, match="did not pass"):
+        pai_vllm.download(tmp_path)
