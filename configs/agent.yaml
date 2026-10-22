@@ -12,3 +12,6 @@ quality:
 regions:
   minimum_pixels: 9
   maximum_regions: 4
+  # 区域提取被截断时是否禁止 normal 结论。true = 保守（当前默认），
+  # false = 允许在已提取区域全部通过时给出 normal，并在报告中保留 truncated 标记。
+  block_normal_when_truncated: true

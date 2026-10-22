@@ -5,7 +5,7 @@ import yaml
 from PIL import Image
 
 from visioninspect.common import ROOT, read_json
-from visioninspect.review_agent import ReviewAgent
+from visioninspect.review_agent import ReviewAgent, truncation_blocks_normal
 from visioninspect.review_contracts import ReviewDecision
 from visioninspect.schemas import FinalizeInput
 from visioninspect.tools import ToolFailure, ToolKit
@@ -236,3 +236,18 @@ def test_invalid_local_round_is_not_published_as_success(
     assert len(rounds) == 2 and rounds[-1].get("error")
     assert "observations" not in rounds[-1]
     assert report["agent_review"]["reviewed_regions"] == {}
+
+
+def test_truncation_vetoes_normal_only_when_the_policy_says_so():
+    """The cap on extracted regions is a policy switch, not a hard rule."""
+    conservative = {"regions": {"block_normal_when_truncated": True}}
+    relaxed = {"regions": {"block_normal_when_truncated": False}}
+    truncated = {"truncated": True}
+    complete = {"truncated": False}
+
+    assert truncation_blocks_normal(conservative, truncated) is True
+    assert truncation_blocks_normal(relaxed, truncated) is False
+    assert truncation_blocks_normal(conservative, complete) is False
+    # A missing key means "not truncated", so old policies keep their behaviour.
+    assert truncation_blocks_normal({"regions": {}}, complete) is False
+    assert truncation_blocks_normal({"regions": {}}, truncated) is True

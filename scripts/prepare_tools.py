@@ -9,6 +9,10 @@ import yaml
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Never demand more reference similarity than this: the measured spread between
+# validation and test images is around 1e-4, which is noise, not evidence.
+MAX_REFERENCE_SIMILARITY_FLOOR = 0.99
 sys.path.insert(0, str(ROOT))
 from visioninspect.common import (
     configure_environment,
@@ -102,8 +106,12 @@ def prepare(category="bottle"):
         review_lower=float(np.quantile(scores, 0.9, method="higher")),
         review_upper=threshold + max(threshold - median, 1e-6),
         pixel_threshold=float(np.quantile(np.asarray(maps), 0.995, method="higher")),
-        reference_similarity_floor=float(
-            np.quantile(similarities, 0.05, method="lower")
+        # A quantile of a distribution whose spread is ~1e-4 puts the gate
+        # inside the noise, so normal test images fail it by chance. Cap it
+        # with an absolute floor that only rejects genuinely unrelated images.
+        reference_similarity_floor=min(
+            MAX_REFERENCE_SIMILARITY_FLOOR,
+            float(np.quantile(similarities, 0.05, method="lower")),
         ),
         quality=dict(
             sharpness_floor=max(

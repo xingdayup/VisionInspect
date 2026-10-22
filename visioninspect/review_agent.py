@@ -29,6 +29,18 @@ if TYPE_CHECKING:
     from .vllm_client import VLLMClient
 
 
+def truncation_blocks_normal(policy: dict, regions_output: dict) -> bool:
+    """Decide whether an unextracted region must veto a normal verdict.
+
+    Conservative by default: a capped extraction may hide a defect. Operators can
+    relax it when the cap is routinely hit by texture noise on good parts, at the
+    cost of trusting only the regions that were actually inspected.
+    """
+    if not regions_output.get("truncated"):
+        return False
+    return bool(policy["regions"].get("block_normal_when_truncated", True))
+
+
 class ReviewState(TypedDict, total=False):
     """Single-key graph state: nodes return the next route only."""
 
@@ -377,7 +389,7 @@ class ReviewAgent:
                         self.reviewed.get(region) != "normal" for region in self.regions
                     ):
                         reasons.append("尚有未完成正常局部核查的疑似区域")
-                    if regions_output.get("truncated"):
+                    if truncation_blocks_normal(self.policy, regions_output):
                         reasons.append("疑似区域数量超过提取上限")
                     if "anomaly" in all_findings:
                         reasons.append("正常结论与已记录异常观察冲突")
