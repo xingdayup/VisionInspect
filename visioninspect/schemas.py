@@ -6,15 +6,21 @@ from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
 
 
 class Contract(BaseModel):
+    """Base for every tool contract: unknown fields are rejected, not ignored."""
+
     model_config = ConfigDict(extra="forbid")
 
 
 class ImageInput(Contract):
+    """A request to inspect one local image of a registered category."""
+
     image_path: str = Field(min_length=1)
     category: str = Field(default="bottle", pattern=r"^[a-z_]+$")
 
 
 class QualityResult(Contract):
+    """Whether the input can be judged at all, plus the measured properties."""
+
     valid: bool
     issues: list[str]
     width: int = 0
@@ -25,6 +31,8 @@ class QualityResult(Contract):
 
 
 class DetectionResult(Contract):
+    """Output of one CUDA PatchCore pass, including where its evidence lives."""
+
     score: FiniteFloat
     anomaly_map_path: str
     model_version: str
@@ -37,6 +45,8 @@ class DetectionResult(Contract):
 
 
 class ReferenceResult(Contract):
+    """Normal training references chosen for comparison, with their similarities."""
+
     reference_paths: list[str]
     similarities: list[FiniteFloat]
     source_split: Literal["train"] = "train"
@@ -44,10 +54,14 @@ class ReferenceResult(Contract):
 
 
 class RegionInput(ImageInput):
+    """A request to extract suspicious regions from an existing anomaly map."""
+
     anomaly_map_path: str
 
 
 class RegionResult(Contract):
+    """Extracted regions; truncated records whether the cap hid further regions."""
+
     crop_paths: list[str]
     evidence_summary: list[str]
     regions: list[dict]
@@ -58,6 +72,8 @@ class RegionResult(Contract):
 
 
 class FinalizeInput(Contract):
+    """Completeness report used to derive the candidate state by rule."""
+
     score: FiniteFloat | None
     threshold: FiniteFloat
     evidence_paths: list[str]
@@ -68,6 +84,8 @@ class FinalizeInput(Contract):
 
 
 class FinalResult(Contract):
+    """The rule-derived candidate plus the reasons a human may need to review it."""
+
     state: Literal["normal_candidate", "anomaly_candidate", "manual_review"]
     evidence_paths: list[str]
     rule_version: str
@@ -75,6 +93,8 @@ class FinalResult(Contract):
 
 
 class ToolError(Contract):
+    """A typed tool failure; retryable marks errors that may succeed on a retry."""
+
     code: Literal[
         "invalid_image",
         "model_missing",

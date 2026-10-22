@@ -1,4 +1,10 @@
-"""Own only this application's vLLM process tree, with a lease-based idle TTL."""
+"""Own only this application's vLLM process tree, with a lease-based idle TTL.
+
+The service never adopts, replaces or kills a server it did not start: binding
+the port is the availability test, and anything already listening there is
+treated as foreign. Idle expiry is lease-aware, so a running review cannot have
+its model reclaimed underneath it.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +15,7 @@ import socket
 import subprocess
 import threading
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import httpx
@@ -19,7 +26,12 @@ from .common import ROOT, project_path, read_json, write_json
 from .resources import kill_tree, resident_tree_memory
 
 
-def gpu_config():
+def gpu_config() -> dict:
+    """Load the GPU config, applying environment overrides and validating limits.
+
+    The endpoint must stay on loopback: a remote endpoint would either leak
+    product images or silently depend on someone else's server.
+    """
     path = project_path(os.environ.get("VISIONINSPECT_GPU_CONFIG", "configs/gpu.yaml"))
     value = yaml.safe_load(path.read_text(encoding="utf8"))
     if "VISIONINSPECT_VLLM_PYTHON" in os.environ:
@@ -57,7 +69,12 @@ def gpu_config():
     return value
 
 
-def gpu_assets_available(config):
+def gpu_assets_available(config: dict) -> bool:
+    """Check that the pinned Qwen files exist at the expected sizes.
+
+    This runs on health requests, so it deliberately skips full hashing; the
+    startup child verifies the digests before the model is loaded.
+    """
     root = Path(config["root"])
     if not config["enabled"] or not Path(config["python"]).is_file():
         return False
@@ -91,7 +108,9 @@ def gpu_assets_available(config):
 
 
 class VLLMRuntime:
-    def __init__(self, directory, config=None):
+    """Start, lease and reap the local vLLM server for this application only."""
+
+    def __init__(self, directory: str | Path, config: dict | None = None) -> None:
         self.config = config or gpu_config()
         self.directory = Path(directory)
         self.lock = threading.RLock()
@@ -114,7 +133,8 @@ class VLLMRuntime:
         )
         self.monitor.start()
 
-    def status(self):
+    def status(self) -> dict:
+        """Report readiness and measured peaks for the runtime panel."""
         with self.lock:
             return dict(
                 enabled=self.config["enabled"],
@@ -138,11 +158,13 @@ class VLLMRuntime:
                 peak_gpu_memory_mib=self.peak_gpu_mib,
             )
 
-    def _record(self, reason):
+    def _record(self, reason: str) -> None:
+        """Persist the current status with the event that triggered it."""
         self.directory.mkdir(parents=True, exist_ok=True)
         write_json(self.directory / "status.json", dict(self.status(), event=reason))
 
-    def _stop(self, reason):
+    def _stop(self, reason: str) -> None:
+        """Terminate the server tree and clear readiness state."""
         process = self.process
         if process:
             if process.stdin:
@@ -177,7 +199,8 @@ class VLLMRuntime:
             self.log = None
         self._record(reason)
 
-    def _spawn(self):
+    def _spawn(self) -> None:
+        """Launch the managed child, refusing if the port is already taken."""
         if not gpu_assets_available(self.config):
             raise RuntimeError("GPU 服务未配置或本地模型资产缺失；不自动下载")
         if self.closed:
@@ -216,7 +239,13 @@ class VLLMRuntime:
         )
 
     @contextlib.contextmanager
-    def acquire(self, progress=None):
+    def acquire(self, progress: Callable[[dict], None] | None = None) -> Iterator[dict]:
+        """Hold a lease that keeps the server alive while a review runs.
+
+        The context manager waits for the model to answer /v1/models, and the
+        lease is released in a finally block so a crash cannot pin the server
+        forever.
+        """
         started = time.monotonic()
         with self.lock:
             self.leases += 1
@@ -276,7 +305,8 @@ class VLLMRuntime:
                 self.leases -= 1
                 self.last_idle = time.monotonic()
 
-    def _monitor(self):
+    def _monitor(self) -> None:
+        """Watch memory budgets, process liveness, GPU peaks and idle expiry."""
         while not self.stop_event.wait(0.5):
             with self.lock:
                 if self.process is None:
@@ -332,7 +362,8 @@ class VLLMRuntime:
                 ):
                     self._stop("idle_ttl")
 
-    def close(self):
+    def close(self) -> None:
+        """Stop the server and the monitor thread at service shutdown."""
         with self.lock:
             self.closed = True
             if self.process:
@@ -340,7 +371,8 @@ class VLLMRuntime:
         self.stop_event.set()
         self.monitor.join(timeout=2)
 
-    def recycle(self, reason):
+    def recycle(self, reason: str) -> None:
+        """Drop the current server so the next review starts a clean one."""
         with self.lock:
             if self.process:
                 self._stop(reason)

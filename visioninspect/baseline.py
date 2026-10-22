@@ -12,6 +12,7 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from .common import (
@@ -26,8 +27,18 @@ from .common import (
     write_json,
 )
 
+if TYPE_CHECKING:
+    import numpy as np
 
-def source_run(args, config):
+    from .model import Detector
+
+
+def source_run(args: argparse.Namespace, config: dict) -> tuple[Path, dict]:
+    """Resolve a completed formal fit and prove its artifacts still match.
+
+    A smoke checkpoint can never be used as a formal model, and a checkpoint
+    that changed after fitting is rejected rather than silently re-scored.
+    """
     if not args.run:
         raise ValueError("--run must identify the completed formal fit directory")
     run = Path(args.run).resolve()
@@ -42,7 +53,19 @@ def source_run(args, config):
     return run, summary
 
 
-def predictions(detector, root, records, output, warmup_record=None, warmup=0):
+def predictions(
+    detector: Detector,
+    root: Path,
+    records: list[dict],
+    output: Path,
+    warmup_record: dict | None = None,
+    warmup: int = 0,
+) -> tuple[list[dict], list[np.ndarray]]:
+    """Score a record set and persist predictions, scores and latency percentiles.
+
+    Warmup passes are excluded from the timing statistics so the first-call
+    overhead of CUDA kernels is not reported as steady-state latency.
+    """
     import numpy as np
     from PIL import Image
 
@@ -89,7 +112,12 @@ def predictions(detector, root, records, output, warmup_record=None, warmup=0):
     return results, maps
 
 
-def worker(args, config, output):
+def worker(args: argparse.Namespace, config: dict, output: Path) -> None:
+    """Execute one experiment command inside the sandboxed child process.
+
+    Each branch refuses to overwrite an existing artifact: a calibration or
+    acceptance run can only be produced once per checkpoint.
+    """
     from .data import check_data, load_manifest
     from .model import Detector, setup
 
@@ -230,6 +258,7 @@ def worker(args, config, output):
             warmup=config["evaluation"]["warmup"],
         )
         import numpy as np
+        import torch
         from PIL import Image
 
         from .metrics import evaluate
@@ -270,7 +299,7 @@ def worker(args, config, output):
             manifest_digest=manifest["digest"],
             test_images=len(records),
             seconds=time.perf_counter() - started,
-            gpu_peak_allocated_bytes=__import__("torch").cuda.max_memory_allocated(),
+            gpu_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
             configuration="PatchCore-ResNet18 CUDA FP32, not paper default",
         )
         if sha256(calibration_path) != calibration_hash:
@@ -318,7 +347,12 @@ def worker(args, config, output):
     )
 
 
-def main():
+def main() -> int:
+    """Create a run directory, then run the worker under memory and time budgets.
+
+    The parent records the environment and supervises the child, so an exceeded
+    budget is reported as a stop reason instead of an unexplained crash.
+    """
     configure_environment()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(

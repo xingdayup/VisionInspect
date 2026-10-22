@@ -10,6 +10,8 @@ REVIEW_RULE_VERSION = "agent-review-v1.1"
 
 
 class Observation(Contract):
+    """One visible finding, bound to the evidence ids it was derived from."""
+
     text: str = Field(min_length=1, max_length=300)
     evidence_ids: list[str] = Field(min_length=1, max_length=4)
     region_id: str | None = Field(default=None, pattern=r"^R[1-4]$")
@@ -17,6 +19,8 @@ class Observation(Contract):
 
 
 class ReviewDecision(Contract):
+    """One bounded review step: what was seen, and which view to look at next."""
+
     observations: list[Observation] = Field(min_length=1, max_length=8)
     action: Literal["compare_region", "compare_reference", "finish"]
     region_id: str | None = Field(default=None, pattern=r"^R[1-4]$")

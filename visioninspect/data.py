@@ -1,3 +1,9 @@
+"""Dataset validation and split manifests.
+
+Nothing here downloads data: the dataset must already be present, and every
+file is hashed so a later evaluation can prove it used the same bytes.
+"""
+
 from __future__ import annotations
 
 import os
@@ -9,7 +15,12 @@ from PIL import Image
 from .common import identity, project_path, read_json, sha256, write_json
 
 
-def _image(path: Path, size: int, mask: bool = False):
+def _image(path: Path, size: int, mask: bool = False) -> None:
+    """Validate one image (or mask) at the frozen resolution.
+
+    Masks must be single-channel, binary and non-empty; an all-zero mask would
+    silently score as a perfect detection region during evaluation.
+    """
     try:
         with Image.open(path) as image:
             image.load()
@@ -28,7 +39,11 @@ def _image(path: Path, size: int, mask: bool = False):
 
 
 def check_data(config: dict) -> dict:
-    """Validate an already present dataset. Never imports an auto-downloading datamodule."""
+    """Validate an already present dataset. Never imports an auto-downloading datamodule.
+
+    Returns a digest-signed manifest that records every file hash and the exact
+    train/validation split, so fitting and evaluation cannot drift apart.
+    """
     import torch
 
     settings = config["dataset"]
@@ -138,6 +153,11 @@ def check_data(config: dict) -> dict:
 
 
 def load_manifest(config: dict, splits: tuple[str, ...]) -> tuple[dict, list[dict]]:
+    """Load the manifest and re-verify only the records needed by this split.
+
+    Fit and calibrate must never open test images or masks, so only the selected
+    splits are hashed here.
+    """
     manifest = read_json(project_path(config["dataset"]["manifest"]))
     if manifest["digest"] != identity(
         {k: v for k, v in manifest.items() if k != "digest"}
@@ -157,7 +177,6 @@ def load_manifest(config: dict, splits: tuple[str, ...]) -> tuple[dict, list[dic
     if not records:
         raise ValueError(f"Empty split: {splits}")
     root = project_path(config["dataset"]["root"])
-    # Only inspect selected split contents: fit/calibrate never open test images or masks.
     for record in records:
         for field, hash_field in [("path", "sha256"), ("mask", "mask_sha256")]:
             if field in record:

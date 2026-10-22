@@ -8,8 +8,10 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import psutil
 import yaml
@@ -18,7 +20,8 @@ from .common import ROOT, read_json, sha256, write_json
 from .resources import kill_tree, resident_tree_memory
 
 
-def idle_ttl():
+def idle_ttl() -> float:
+    """Read and validate the idle expiry from the service config."""
     value = yaml.safe_load((ROOT / "configs/service.yaml").read_text("utf8"))
     if value.get("schema_version") != 1:
         raise ValueError("Unsupported service config schema")
@@ -34,11 +37,25 @@ def idle_ttl():
 
 
 class ResidentWorker:
+    """Supervise one long-lived inference subprocess per state root.
+
+    A worker is started on demand, reused across tasks, and killed on idle
+    expiry, memory overrun, task timeout or shutdown. Each task is addressed by
+    a per-run hex token so a stale completion file from an earlier attempt can
+    never be mistaken for the current reply.
+    """
+
     task_timeout_seconds = 180
     memory_limit_bytes = 12 * 1024**3
     poll_seconds = 0.2
 
-    def __init__(self, directory: Path, command, ttl=None):
+    def __init__(
+        self,
+        directory: Path,
+        command: Callable[[Path], list[str]],
+        ttl: float | None = None,
+    ) -> None:
+        """Bind the supervisor to its state directory and start the monitor."""
         self.directory = directory
         self.directory.mkdir(parents=True, exist_ok=True)
         self.command_factory = command
@@ -66,10 +83,12 @@ class ResidentWorker:
         )
         self.monitor.start()
 
-    def _publish(self, **values):
+    def _publish(self, **values: Any) -> None:
+        """Merge new fields into the status snapshot read by the API."""
         self._state = dict(self._state, **values)
 
-    def _event(self, event, **values):
+    def _event(self, event: str, **values: Any) -> None:
+        """Append one lifecycle event for later forensic review."""
         with (self.directory / "events.jsonl").open("a", encoding="utf8") as stream:
             stream.write(
                 json.dumps(
@@ -84,7 +103,8 @@ class ResidentWorker:
                 + "\n"
             )
 
-    def status(self):
+    def status(self) -> dict:
+        """Report current state plus how long until the idle TTL closes it."""
         state = dict(self._state)
         idle = (
             max(0.0, time.monotonic() - state["idle_since"])
@@ -102,7 +122,8 @@ class ResidentWorker:
             memory_limit_bytes=self.memory_limit_bytes,
         )
 
-    def _start(self, directory):
+    def _start(self, directory: Path) -> None:
+        """Spawn a new worker generation with its own log file and token space."""
         self.generation = uuid.uuid4().hex
         self.tracked = {}
         self.command = self.command_factory(directory)
@@ -131,7 +152,12 @@ class ResidentWorker:
         )
         self._event("started", pid=self.process.pid)
 
-    def _stop(self, reason):
+    def _stop(self, reason: str) -> None:
+        """Kill the process tree, including children sampled earlier.
+
+        Descendants are reaped from the tracked set as well, because a child can
+        outlive its parent and would otherwise keep the CUDA context alive.
+        """
         process = self.process
         if process is not None:
             if process.poll() is None:
@@ -172,11 +198,13 @@ class ResidentWorker:
             last_stop_reason=reason,
         )
 
-    def recycle(self, reason):
+    def recycle(self, reason: str) -> None:
+        """Force the next task to start a fresh worker process."""
         with self.lock:
             self._stop(reason)
 
-    def _monitor(self):
+    def _monitor(self) -> None:
+        """Enforce idle TTL and memory ceilings while no task holds the lock."""
         while not self.shutdown.wait(min(self.poll_seconds, self.ttl / 4)):
             if not self.lock.acquire(blocking=False):
                 continue
@@ -202,7 +230,13 @@ class ResidentWorker:
             finally:
                 self.lock.release()
 
-    def run(self, directory: Path):
+    def run(self, directory: Path) -> dict:
+        """Send one task to the worker and wait for a verified reply.
+
+        The reply is only accepted when its token matches, it reports success,
+        and the report hash on disk matches the one the worker computed. The
+        execution record is written even on failure.
+        """
         with self.lock:
             started = time.monotonic()
             peak = 0
@@ -309,7 +343,8 @@ class ResidentWorker:
                     ),
                 )
 
-    def close(self):
+    def close(self) -> None:
+        """Stop the monitor and the worker; safe to call once per service shutdown."""
         self.shutdown.set()
         self.monitor.join(timeout=2)
         with self.lock:
