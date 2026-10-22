@@ -1,15 +1,16 @@
 """Versioned local tool contracts, validated before and after each invocation."""
+
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
 
 
 class Contract(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
 
 
 class ImageInput(Contract):
     image_path: str = Field(min_length=1)
-    category: str = Field(default='bottle',pattern=r'^[a-z_]+$')
+    category: str = Field(default="bottle", pattern=r"^[a-z_]+$")
 
 
 class QualityResult(Contract):
@@ -28,16 +29,16 @@ class DetectionResult(Contract):
     model_version: str
     elapsed_seconds: float = Field(ge=0)
     threshold: FiniteFloat
-    evidence: dict[str,str]
-    device: Literal['cuda:0']
+    evidence: dict[str, str]
+    device: Literal["cuda:0"]
     peak_gpu_allocated_bytes: int = Field(ge=0)
-    checkpoint_origin_device: Literal['cpu','cuda']
+    checkpoint_origin_device: Literal["cpu", "cuda"]
 
 
 class ReferenceResult(Contract):
     reference_paths: list[str]
     similarities: list[FiniteFloat]
-    source_split: Literal['train'] = 'train'
+    source_split: Literal["train"] = "train"
     similarity_floor: FiniteFloat
 
 
@@ -50,7 +51,7 @@ class RegionResult(Contract):
     evidence_summary: list[str]
     regions: list[dict]
     pixel_threshold: FiniteFloat
-    anomaly_area_ratio: float = Field(ge=0,le=1)
+    anomaly_area_ratio: float = Field(ge=0, le=1)
     total_regions: int = 0
     truncated: bool = False
 
@@ -66,22 +67,31 @@ class FinalizeInput(Contract):
 
 
 class FinalResult(Contract):
-    state: Literal['normal_candidate','anomaly_candidate','manual_review']
+    state: Literal["normal_candidate", "anomaly_candidate", "manual_review"]
     evidence_paths: list[str]
     rule_version: str
     reasons: list[str]
 
 
 class ToolError(Contract):
-    code: Literal['invalid_image','model_missing','schema_error','timeout','tool_failure','budget_exceeded','artifact_missing','vlm_unavailable']
+    code: Literal[
+        "invalid_image",
+        "model_missing",
+        "schema_error",
+        "timeout",
+        "tool_failure",
+        "budget_exceeded",
+        "artifact_missing",
+        "vlm_unavailable",
+    ]
     message: str
     retryable: bool = False
 
 
 TOOL_CONTRACTS = {
-    'inspect_image_quality': (ImageInput, QualityResult),
-    'detect_anomaly': (ImageInput, DetectionResult),
-    'retrieve_normal_reference': (ImageInput, ReferenceResult),
-    'analyze_suspicious_region': (RegionInput, RegionResult),
-    'finalize_inspection': (FinalizeInput, FinalResult),
+    "inspect_image_quality": (ImageInput, QualityResult),
+    "detect_anomaly": (ImageInput, DetectionResult),
+    "retrieve_normal_reference": (ImageInput, ReferenceResult),
+    "analyze_suspicious_region": (RegionInput, RegionResult),
+    "finalize_inspection": (FinalizeInput, FinalResult),
 }
