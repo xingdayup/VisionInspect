@@ -1,5 +1,7 @@
 import hashlib
+
 import pytest
+
 from scripts import prepare_assets
 from visioninspect.common import offline
 

@@ -1,7 +1,9 @@
 import subprocess
 import sys
+
 import psutil
-from visioninspect.resources import tree_memory, kill_tree, resident_tree_memory
+
+from visioninspect.resources import kill_tree, resident_tree_memory, tree_memory
 
 
 def test_windows_launcher_child_memory_is_included():

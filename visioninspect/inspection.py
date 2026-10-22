@@ -3,7 +3,8 @@
 import argparse
 import time
 from pathlib import Path
-from .common import configure_environment, ROOT
+
+from .common import ROOT, configure_environment
 from .service import TaskStore, registry
 
 

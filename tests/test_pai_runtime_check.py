@@ -2,7 +2,9 @@
 
 import sys
 from types import ModuleType, SimpleNamespace
+
 import pytest
+
 from scripts import pai_vllm
 
 

@@ -1,18 +1,21 @@
 """Single resident subprocess with idle expiry and per-task hard supervision."""
 
 from __future__ import annotations
+
 import json
 import math
 import subprocess
 import threading
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+
 import psutil
 import yaml
-from .common import ROOT, read_json, write_json, sha256
-from .resources import resident_tree_memory, kill_tree
+
+from .common import ROOT, read_json, sha256, write_json
+from .resources import kill_tree, resident_tree_memory
 
 
 def idle_ttl():
@@ -71,7 +74,7 @@ class ResidentWorker:
             stream.write(
                 json.dumps(
                     dict(
-                        time=datetime.now(timezone.utc).isoformat(),
+                        time=datetime.now(UTC).isoformat(),
                         event=event,
                         generation=self.generation,
                         **values,

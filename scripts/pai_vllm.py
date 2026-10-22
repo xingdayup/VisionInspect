@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from urllib.request import build_opener, ProxyHandler, urlopen, Request
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 MODEL = "Qwen/Qwen3-VL-8B-Instruct"
 REVISION = "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"

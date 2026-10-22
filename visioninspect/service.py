@@ -1,19 +1,22 @@
 """Local queue, SQLite history and one supervised resident inference worker."""
 
 from __future__ import annotations
+
 import json
 import os
 import shutil
 import sqlite3
 import sys
+import threading
 import time
 import traceback
 import uuid
-import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+
 import yaml
+
 from .common import ROOT, project_path, read_json, write_json
 from .resident import ResidentWorker
 from .schemas import FinalResult
@@ -21,7 +24,7 @@ from .vllm_runtime import VLLMRuntime, gpu_config
 
 
 def timestamp():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def cuda_available():
@@ -699,9 +702,7 @@ class TaskStore:
             execution["timings"] = dict(
                 queued_seconds=max(
                     0,
-                    (
-                        datetime.now(timezone.utc) - datetime.fromisoformat(queued)
-                    ).total_seconds()
+                    (datetime.now(UTC) - datetime.fromisoformat(queued)).total_seconds()
                     - (time.perf_counter() - started),
                 ),
                 gpu_prepare_seconds=(gpu_initialization or {}).get(

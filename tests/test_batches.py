@@ -3,9 +3,11 @@
 import sqlite3
 import time
 from io import BytesIO
+
 import pytest
-from PIL import Image
 from fastapi.testclient import TestClient
+from PIL import Image
+
 from visioninspect.api import create_app
 from visioninspect.service import TaskStore, timestamp
 

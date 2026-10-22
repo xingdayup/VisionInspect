@@ -4,11 +4,11 @@ import argparse
 import gc
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +28,7 @@ def detector_probe(output):
     import numpy as np
     import torch
     from PIL import Image
+
     from visioninspect.data import load_manifest
     from visioninspect.model import Detector, setup
     from visioninspect.service import registry
@@ -107,6 +108,7 @@ def wait_task(store, task):
 
 def verify(output, with_vlm, ttl_smoke):
     import numpy as np
+
     from visioninspect.service import TaskStore
 
     # The CUDA probe exits before the service starts; its context/weights are released.
@@ -185,8 +187,9 @@ def verify(output, with_vlm, ttl_smoke):
         protocol = {}
         multistep = False
         if with_vlm and "uncertain" in direct["cases"]:
-            from visioninspect.vllm_client import VLLMClient
             from PIL import Image
+
+            from visioninspect.vllm_client import VLLMClient
 
             uncertain = next(item for item in results if item["case"] == "uncertain")
             task = store.get(uncertain["task_id"])

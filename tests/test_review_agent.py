@@ -3,11 +3,12 @@
 import pytest
 import yaml
 from PIL import Image
+
 from visioninspect.common import ROOT, read_json
 from visioninspect.review_agent import ReviewAgent
 from visioninspect.review_contracts import ReviewDecision
 from visioninspect.schemas import FinalizeInput
-from visioninspect.tools import ToolKit, ToolFailure
+from visioninspect.tools import ToolFailure, ToolKit
 
 
 class FixtureTools:

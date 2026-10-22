@@ -1,14 +1,16 @@
 """Metadata transport regressions; responses are fixtures, not live connectivity tests."""
 
+import json
+import ssl
+import sys
 from http.client import IncompleteRead
 from io import BytesIO
-import ssl
-import json
-import sys
 from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
-from packaging.tags import Tag
+
 import pytest
+from packaging.tags import Tag
+
 from scripts import preflight_pai_app as preflight
 
 

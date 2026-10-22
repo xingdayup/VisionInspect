@@ -2,9 +2,10 @@ import numpy as np
 import pytest
 import yaml
 from PIL import Image
-from visioninspect.common import ROOT
-from visioninspect.tools import ToolKit, ToolFailure
+
 from visioninspect.agent import InspectionAgent
+from visioninspect.common import ROOT
+from visioninspect.tools import ToolFailure, ToolKit
 
 
 def policy():

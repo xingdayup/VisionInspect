@@ -5,10 +5,12 @@ import io
 import json
 import shutil
 import tarfile
+
 import pytest
-from visioninspect.data import check_data, load_manifest
-from visioninspect.common import sha256
+
 from scripts.install_assets import install
+from visioninspect.common import sha256
+from visioninspect.data import check_data, load_manifest
 
 
 def test_explicit_relocation_preserves_manifest_identity_and_checks_content(

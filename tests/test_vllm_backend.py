@@ -1,20 +1,22 @@
 """Protocol and process supervision only; no Qwen weights or GPU inference here."""
 
-import os
 import json
+import os
 import socket
 import subprocess
 import sys
 import time
+
 import httpx
 import psutil
 import pytest
 from PIL import Image
+
+from scripts.pai_vllm import MODEL, REVISION, validate_source
 from visioninspect.common import offline, read_json, write_json
-from visioninspect.vllm_client import VLLMClient
-from visioninspect.vllm_runtime import VLLMRuntime, gpu_config, gpu_assets_available
 from visioninspect.tools import ToolFailure
-from scripts.pai_vllm import validate_source, MODEL, REVISION
+from visioninspect.vllm_client import VLLMClient
+from visioninspect.vllm_runtime import VLLMRuntime, gpu_assets_available, gpu_config
 
 
 def test_multimodal_json_request_and_actual_input_audit(tmp_path, monkeypatch):

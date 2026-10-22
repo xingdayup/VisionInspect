@@ -2,8 +2,9 @@
 
 import pytest
 import yaml
-from visioninspect.common import ROOT
+
 from visioninspect.agent import InspectionAgent
+from visioninspect.common import ROOT
 from visioninspect.tools import ToolFailure
 
 

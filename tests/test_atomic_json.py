@@ -1,5 +1,7 @@
 from pathlib import Path
+
 import pytest
+
 from visioninspect.common import read_json, write_json
 
 

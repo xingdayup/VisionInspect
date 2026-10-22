@@ -1,13 +1,16 @@
 """Local-only multimodal JSON client. Never loads a second language model."""
 
 from __future__ import annotations
+
 import base64
 import time
 from pathlib import Path
+
 import httpx
 from PIL import Image, ImageOps
+
 from .common import sha256, write_json
-from .review_contracts import ReviewDecision, REVIEW_PROMPT
+from .review_contracts import REVIEW_PROMPT, ReviewDecision
 from .tools import ToolFailure
 
 

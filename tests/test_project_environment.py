@@ -1,6 +1,7 @@
 """Environment gates are filesystem validation only; no dependencies installed."""
 
 import pytest
+
 from scripts.check_project_environment import validate_environment
 
 

@@ -2,7 +2,6 @@
 
 import argparse
 import concurrent.futures
-from http.client import IncompleteRead
 import json
 import platform
 import re
@@ -13,7 +12,9 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from http.client import IncompleteRead
 from pathlib import Path
+
 from packaging.tags import sys_tags
 from packaging.utils import parse_wheel_filename
 

@@ -1,7 +1,9 @@
 """Contracts for bounded evidence-driven review; no arbitrary tool arguments."""
 
 from typing import Literal
+
 from pydantic import Field
+
 from .schemas import Contract
 
 REVIEW_RULE_VERSION = "agent-review-v1.1"

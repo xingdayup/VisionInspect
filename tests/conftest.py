@@ -1,8 +1,10 @@
 import copy
+
 import numpy as np
 import pytest
 from PIL import Image
-from visioninspect.common import ROOT, load_config, configure_environment
+
+from visioninspect.common import ROOT, configure_environment, load_config
 
 configure_environment()
 
@@ -10,8 +12,8 @@ configure_environment()
 @pytest.fixture(autouse=True)
 def model_assets(tmp_path, monkeypatch):
     """Synthetic metadata only, so API/tool tests never need users' model assets."""
+    from visioninspect import api, service
     from visioninspect.common import identity, sha256, write_json
-    from visioninspect import service, api
 
     fit = tmp_path / "fixture-fit"
     fit.mkdir()

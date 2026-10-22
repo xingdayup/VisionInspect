@@ -1,7 +1,9 @@
 import io
 import json
 from types import SimpleNamespace
+
 import pytest
+
 from scripts import pai_vllm
 
 

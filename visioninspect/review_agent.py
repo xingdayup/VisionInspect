@@ -1,14 +1,17 @@
 """LangGraph review loop with evidence binding and deterministic candidate gates."""
 
 from __future__ import annotations
+
 import time
 from typing import TypedDict
+
 from PIL import Image
+
 from .agent import InspectionAgent
 from .common import write_json
+from .review_contracts import REVIEW_RULE_VERSION
 from .schemas import FinalResult
 from .tools import ToolFailure
-from .review_contracts import REVIEW_RULE_VERSION
 
 
 class ReviewState(TypedDict, total=False):
@@ -372,7 +375,7 @@ class ReviewAgent:
         return dict(route="end")
 
     def run(self, image_path, category):
-        from langgraph.graph import StateGraph, START, END
+        from langgraph.graph import END, START, StateGraph
 
         self.image_path, self.category = str(image_path), category
         self.started = time.perf_counter()

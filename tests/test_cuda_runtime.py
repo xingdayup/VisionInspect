@@ -1,11 +1,13 @@
 """CUDA placement/roundtrip tests; synthetic tensors are not benchmark results."""
 
 from io import BytesIO
+
 import numpy as np
 import pytest
 import torch
 from fastapi.testclient import TestClient
 from PIL import Image
+
 from visioninspect.api import create_app
 from visioninspect.common import ROOT, load_config
 from visioninspect.model import Detector, cuda_device, setup

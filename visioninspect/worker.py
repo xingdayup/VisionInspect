@@ -9,20 +9,22 @@ import sys
 import threading
 import traceback
 from pathlib import Path
+
 import yaml
+
+from .agent import InspectionAgent
 from .common import (
     ROOT,
     configure_environment,
+    identity,
     offline,
     read_json,
-    write_json,
-    identity,
     sha256,
+    write_json,
 )
-from .agent import InspectionAgent
+from .model_cache import ModelCache
 from .service import registry
 from .tools import ToolKit
-from .model_cache import ModelCache
 
 
 def main(directory, cache=None, worker_runtime=None):

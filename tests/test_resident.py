@@ -3,12 +3,13 @@
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+
 import psutil
 import pytest
-from visioninspect.common import ROOT, read_json, write_json
-from visioninspect.resident import ResidentWorker
-from visioninspect.model_cache import ModelCache
 
+from visioninspect.common import ROOT, read_json, write_json
+from visioninspect.model_cache import ModelCache
+from visioninspect.resident import ResidentWorker
 
 FAKE_WORKER = """
 import json,os,sys,time

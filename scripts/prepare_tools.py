@@ -1,8 +1,9 @@
 """Prepare reference index and policy using normal training/validation only."""
 
-from pathlib import Path
 import json
 import sys
+from pathlib import Path
+
 import numpy as np
 import yaml
 from PIL import Image
@@ -11,13 +12,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from visioninspect.common import (
     configure_environment,
+    identity,
     load_config,
     offline,
     project_path,
     read_json,
     sha256,
     write_json,
-    identity,
 )
 from visioninspect.data import load_manifest
 from visioninspect.model import Detector, setup

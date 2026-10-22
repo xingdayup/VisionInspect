@@ -1,13 +1,15 @@
-from io import BytesIO
 import json
 import sys
 import time
+from io import BytesIO
+
 import pytest
-from PIL import Image
 from fastapi.testclient import TestClient
+from PIL import Image
+
 from visioninspect.api import create_app
-from visioninspect.service import TaskStore, timestamp
 from visioninspect.common import read_json, write_json
+from visioninspect.service import TaskStore, timestamp
 
 pytestmark = pytest.mark.usefixtures("gpu_service_fixture")
 

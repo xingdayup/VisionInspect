@@ -1,8 +1,10 @@
 import copy
 import socket
+
 import numpy as np
 import pytest
 from PIL import Image
+
 from visioninspect.common import offline
 from visioninspect.data import check_data, load_manifest
 from visioninspect.metrics import calibrate, evaluate

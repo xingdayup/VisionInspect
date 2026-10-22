@@ -5,13 +5,13 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
-from pathlib import Path
 import platform
 import subprocess
 import sys
 import time
 import traceback
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from .common import (
@@ -45,6 +45,7 @@ def source_run(args, config):
 def predictions(detector, root, records, output, warmup_record=None, warmup=0):
     import numpy as np
     from PIL import Image
+
     from .artifacts import save_evidence
 
     if warmup_record is not None:
@@ -230,6 +231,7 @@ def worker(args, config, output):
         )
         import numpy as np
         from PIL import Image
+
         from .metrics import evaluate
 
         masks = []
@@ -289,6 +291,7 @@ def worker(args, config, output):
         raise ValueError("Calibration does not belong to this checkpoint/config")
     import numpy as np
     from PIL import Image
+
     from .artifacts import save_evidence
 
     image_path = Path(args.image).resolve()
@@ -377,7 +380,8 @@ def main():
     )
     print(f"RUN_DIRECTORY={output}", flush=True)
     import psutil
-    from .resources import tree_memory, kill_tree
+
+    from .resources import kill_tree, tree_memory
 
     seconds_limit = config["runtime"].get(f"{args.command}_timeout_seconds", 600)
     started = time.perf_counter()

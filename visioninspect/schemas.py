@@ -1,6 +1,7 @@
 """Versioned local tool contracts, validated before and after each invocation."""
 
 from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
 
 

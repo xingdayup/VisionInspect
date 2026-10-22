@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+
 from visioninspect.api import app
 from visioninspect.schemas import DetectionResult, FinalResult
 

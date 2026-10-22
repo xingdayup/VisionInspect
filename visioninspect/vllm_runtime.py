@@ -1,6 +1,7 @@
 """Own only this application's vLLM process tree, with a lease-based idle TTL."""
 
 from __future__ import annotations
+
 import contextlib
 import math
 import os
@@ -9,11 +10,13 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+
 import httpx
 import psutil
 import yaml
-from .common import ROOT, project_path, write_json, read_json
-from .resources import resident_tree_memory, kill_tree
+
+from .common import ROOT, project_path, read_json, write_json
+from .resources import kill_tree, resident_tree_memory
 
 
 def gpu_config():
@@ -59,7 +62,7 @@ def gpu_assets_available(config):
     if not config["enabled"] or not Path(config["python"]).is_file():
         return False
     try:
-        from scripts.pai_vllm import MODEL, REVISION, NAMES, WEIGHTS
+        from scripts.pai_vllm import MODEL, NAMES, REVISION, WEIGHTS
 
         directory = root / "weights/qwen3-vl-8b-instruct"
         source = read_json(directory / "source.json")
