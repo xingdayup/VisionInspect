@@ -271,3 +271,23 @@ def test_truncation_vetoes_normal_only_when_the_policy_says_so():
     # A missing key means "not truncated", so old policies keep their behaviour.
     assert truncation_blocks_normal({"regions": {}}, complete) is False
     assert truncation_blocks_normal({"regions": {}}, truncated) is True
+
+
+def test_context_spells_out_coverage_and_remaining_regions(tmp_path):
+    """The model is told what is left instead of having to infer it."""
+    _, client = run(
+        tmp_path,
+        [
+            decision("compare_region", "unknown", "R1", 1),
+            decision("compare_region", "unknown", "R2", 1, local=True),
+            decision(local=True),
+        ],
+        regions=2,
+    )
+    first = client.inputs[0][0]
+    assert first["remaining_regions"] == ["R1", "R2"]
+    assert first["coverage"] == "0/2"
+
+    third = client.inputs[2][0]
+    assert third["remaining_regions"] == ["R2"]
+    assert third["coverage"] == "1/2"

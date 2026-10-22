@@ -271,6 +271,12 @@ class ReviewAgent:
                 ],
                 reference_ids=list(range(1, len(self.references) + 1)),
                 reviewed_regions=self.reviewed,
+                # Spell the coverage out: the model should not have to infer the
+                # remaining work from a list, which is where it kept going wrong.
+                remaining_regions=[i for i in self.regions if i not in self.reviewed],
+                coverage=f"{len(self.reviewed)}/{len(self.regions)}"
+                if self.regions
+                else "0/0",
                 previous_observations=[
                     o for item in self.rounds for o in item.get("observations", [])
                 ],
