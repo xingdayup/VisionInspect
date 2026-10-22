@@ -37,8 +37,8 @@ def main(directory,cache=None,worker_runtime=None):
             gpu=snapshot.get('gpu') or gpu_config()
             report=ReviewAgent(tools,policy,VLLMClient(gpu,request.get('gpu_startup_error')),progress,gpu['max_model_calls']).run(
                 request['image_path'],request['category'])
-            from .review_contracts import REVIEW_PROMPT
-            report['review_policy']=dict(version='agent-review-v1',max_model_calls=gpu['max_model_calls'],
+            from .review_contracts import REVIEW_PROMPT,REVIEW_RULE_VERSION
+            report['review_policy']=dict(version=REVIEW_RULE_VERSION,max_model_calls=gpu['max_model_calls'],
                 request_timeout_seconds=gpu['request_timeout_seconds'],model=gpu['model'],
                 prompt_digest=identity(dict(prompt=REVIEW_PROMPT)),
                 graph_source_sha256=sha256(ROOT/'visioninspect/review_agent.py'),

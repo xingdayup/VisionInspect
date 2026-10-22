@@ -109,3 +109,33 @@ def test_visible_anomaly_can_finish_as_candidate(tmp_path):
 def test_local_normal_cannot_erase_previously_visible_anomaly(tmp_path):
     report,_=run(tmp_path,[decision('compare_region','unknown','R1',1,finding='anomaly'),decision(local=True)])
     assert report['result']['state']=='manual_review' and '冲突' in ''.join(report['result']['reasons'])
+
+
+@pytest.mark.parametrize('verdict,finding,evidence',[
+    ('normal','normal',['reference:1']),
+    ('anomaly','anomaly',['reference:1']),
+    ('normal','normal',['original']),
+])
+def test_reference_only_or_uncompared_normal_cannot_decide_query(tmp_path,verdict,finding,evidence):
+    value=decision(verdict=verdict,finding=finding)
+    value.observations[0].evidence_ids=evidence
+    report,_=run(tmp_path,[value],regions=0)
+    assert report['result']['state']=='manual_review'
+    assert not report['agent_review']['accepted']
+
+
+@pytest.mark.parametrize('missing_region,conflicting',[ (True,False),(False,True) ])
+def test_invalid_local_round_is_not_published_as_success(tmp_path,missing_region,conflicting):
+    value=decision(local=True)
+    if missing_region:
+        value.observations[0].region_id=None
+        value.observations[0].evidence_ids=['original']
+    if conflicting:
+        other=value.observations[0].model_copy(update=dict(finding='anomaly'))
+        value.observations.append(other)
+    report,_=run(tmp_path,[decision('compare_region','unknown','R1',1),value])
+    assert report['result']['state']=='manual_review'
+    rounds=report['agent_review']['rounds']
+    assert len(rounds)==2 and rounds[-1].get('error')
+    assert 'observations' not in rounds[-1]
+    assert report['agent_review']['reviewed_regions']=={}

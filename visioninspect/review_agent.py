@@ -8,6 +8,7 @@ from .agent import InspectionAgent
 from .common import identity, write_json
 from .schemas import FinalResult
 from .tools import ToolFailure
+from .review_contracts import REVIEW_RULE_VERSION
 
 
 class ReviewState(TypedDict, total=False):
@@ -77,14 +78,23 @@ class ReviewAgent:
 
     def validate(self, decision, images):
         allowed = {item['id'] for item in images}
-        _, region_id, reference_id = self.current
+        kind, region_id, reference_id = self.current
         for observation in decision.observations:
             if not set(observation.evidence_ids).issubset(allowed):
                 raise ToolFailure('schema_error','模型引用了本轮未提供的图像证据')
+            if kind=='global':
+                if 'original' not in observation.evidence_ids:
+                    raise ToolFailure('schema_error','整体观察必须引用待检原图，不能以参考图代替待检证据')
+                if observation.finding=='normal' and f'reference:{reference_id}' not in observation.evidence_ids:
+                    raise ToolFailure('schema_error','正常整体观察必须同时引用待检原图和本轮正常参考图')
             if observation.region_id is not None:
                 required = {f'region:{region_id}',f'matched:{region_id}:{reference_id}'}
                 if region_id is None or observation.region_id != region_id or not required.issubset(observation.evidence_ids):
                     raise ToolFailure('schema_error','局部观察未绑定正确的待检和参考区域')
+        if kind=='region':
+            findings=[o.finding for o in decision.observations if o.region_id==region_id]
+            if not findings or len(set(findings))!=1:
+                raise ToolFailure('schema_error','本轮局部检查缺少一致的区域观察')
         if decision.action != 'finish' and decision.verdict != 'unknown':
             raise ToolFailure('schema_error','补充检查动作不能同时提交最终结论')
         if decision.action == 'compare_region':
@@ -121,8 +131,6 @@ class ReviewAgent:
             self.last = decision
             if self.current[0]=='region':
                 findings = [o.finding for o in decision.observations if o.region_id==self.current[1]]
-                if not findings or len(set(findings))!=1:
-                    raise ToolFailure('schema_error','本轮局部检查缺少一致的区域观察')
                 self.reviewed[self.current[1]] = findings[0]
             if decision.action=='finish':
                 return dict(route='finish')
@@ -194,11 +202,11 @@ class ReviewAgent:
                 if not reasons:
                     reasons.append(self.last.summary)
             self.report['result'] = FinalResult(state=final_state,evidence_paths=self.report['result']['evidence_paths'],
-                rule_version='agent-review-v1',reasons=reasons).model_dump()
+                rule_version=REVIEW_RULE_VERSION,reasons=reasons).model_dump()
             self.report['agent_review'] = dict(status='failed' if self.failure else 'completed',calls=self.calls,
                 maximum_calls=self.maximum,rounds=self.rounds,reviewed_regions=self.reviewed,
                 verdict=self.last.verdict if self.last else 'unknown',accepted=final_state!='manual_review',
-                policy_version='agent-review-v1',backend=self.client.backend,reasons=reasons)
+                policy_version=REVIEW_RULE_VERSION,backend=self.client.backend,reasons=reasons)
         self.report.update(notice='研究质检候选结果，Agent 复核与人工记录独立保存；不构成工业放行授权。',vlm_calls=self.calls,tool_calls=len(self.report['trace']),seconds=time.perf_counter()-self.started,
             stop_reason='manual_review_required' if self.report['result']['state']=='manual_review' else 'rules_complete',
             human_review=None,effective_result=dict(self.report['result'],source='agent' if self.calls else 'baseline'))

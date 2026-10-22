@@ -4,18 +4,16 @@ cd "$(dirname "$0")/.."
 export PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 PYTHONUTF8=1 UV_PYTHON_DOWNLOADS=never
 export PIP_CACHE_DIR="$PWD/.cache/pip" TMPDIR="$PWD/.tmp"
 mkdir -p "$PIP_CACHE_DIR" "$TMPDIR" logs
+if [[ -L .venv ]]; then
+  echo 'Refusing a linked .venv; use a project-owned environment directory' >&2
+  exit 1
+fi
 platform_python=/usr/local/bin/python3
 "$platform_python" -B scripts/preflight_pai_app.py 2>&1 | tee logs/pai-app-preflight.log
 if [[ ! -e .venv ]]; then
   "$platform_python" -m venv .venv
 fi
-.venv/bin/python -B - <<'PY'
-from pathlib import Path
-import sys
-assert sys.version_info[:2] == (3,12)
-assert Path(sys.prefix).resolve() == (Path.cwd()/'.venv').resolve()
-assert 'include-system-site-packages = false' in Path('.venv/pyvenv.cfg').read_text().lower()
-PY
+.venv/bin/python -B scripts/check_project_environment.py 2>&1 | tee logs/pai-app-environment-check.log
 .venv/bin/python -m pip install --require-hashes --only-binary=:all: --extra-index-url https://download.pytorch.org/whl/cpu -r requirements-agent-linux.txt 2>&1 | tee logs/pai-app-install.log
 .venv/bin/python -m pip check 2>&1 | tee logs/pai-app-pip-check.log
 .venv/bin/python -m pip freeze > logs/pai-app-packages.txt
