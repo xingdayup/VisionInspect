@@ -194,12 +194,8 @@ class ReviewAgent:
                     or observation.region_id != region_id
                     or not required.issubset(observation.evidence_ids)
                 ):
-                    # Recoverable: the model cited a region it was not shown.
-                    # One bounded retry is cheaper than failing the whole review.
                     raise ToolFailure(
-                        "schema_error",
-                        "局部观察未绑定正确的待检和参考区域",
-                        retryable=True,
+                        "schema_error", "局部观察未绑定正确的待检和参考区域"
                     )
         if kind == "region":
             findings = [
@@ -210,6 +206,11 @@ class ReviewAgent:
         if decision.action != "finish" and decision.verdict != "unknown":
             raise ToolFailure("schema_error", "补充检查动作不能同时提交最终结论")
         if decision.action == "compare_region":
+            # reference_id is optional in the contract: an omitted value means
+            # "the reference this view already uses", which is what the model
+            # sees and what a reader would assume.
+            if decision.reference_id is None:
+                decision.reference_id = reference_id
             if (
                 decision.region_id not in self.regions
                 or decision.reference_id not in range(1, len(self.references) + 1)
@@ -296,7 +297,10 @@ class ReviewAgent:
             self.rounds.append(
                 dict(round=self.calls, view=list(self.current), error=trace["error"])
             )
-            if error.retryable and self.retry_count < 1 and self.calls < self.maximum:
+            # Schema errors are model formatting slips, not evidence
+            # contradictions, so one bounded retry is worth spending.
+            recoverable = error.retryable or error.code == "schema_error"
+            if recoverable and self.retry_count < 1 and self.calls < self.maximum:
                 self.retry_count += 1
                 return dict(route="decide")
             self.failure = f"{error.code}: {error.message}"
