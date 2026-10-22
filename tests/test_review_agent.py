@@ -384,3 +384,21 @@ def test_accepted_review_records_no_rejection_gates(tmp_path):
     )
     assert report["result"]["state"] == "normal_candidate"
     assert report["agent_review"]["gates"] == []
+
+
+def test_corrections_share_one_bounded_pool(tmp_path):
+    """Two corrections total: a duplicate and a protocol failure cannot both retry twice."""
+    repeated = decision("compare_reference", "unknown", reference=1)
+    report, _ = run(
+        tmp_path,
+        [
+            repeated,
+            ToolFailure("schema_error", "malformed reply", True),
+            decision(local=True),
+        ],
+    )
+    # call 1 repeats a view, call 2 fails to parse, call 3 still cites the wrong
+    # region: the correction pool is spent and the loop stops instead of growing.
+    assert report["vlm_calls"] == 3
+    assert report["result"]["state"] == "manual_review"
+    assert report["agent_review"]["gates"]

@@ -223,3 +223,20 @@ PatchCore 只在 `train/good` 上建立 memory bank，训练与校准阶段没�
 报告新增 `agent_review.gates`，把中文拒绝原因映射成稳定代码（`region_unreviewed`、`regions_truncated`、`anomaly_conflict`、`no_normal_evidence`、`reference_similarity`、`no_final_decision`、`model_failure`）。理由文本面向人，代码面向统计。
 
 实验脚本的汇总里新增 `rejection_gates`，下次真机跑完可以直接按原因分组，不必再靠通读中文原因去猜是哪条门控拦住的——这轮排查就是靠人工读原因，花了很久。
+
+### 复核循环的行为矩阵（本机可验证部分）
+
+下列行为由回归测试固定，不依赖 GPU；它们是"循环不再自我阻塞"的证据，**不**代表模型在真实图像上的表现。
+
+| 场景 | 期望结果 | 测试 |
+| --- | --- | --- |
+| 4 个区域全 normal，随后重复请求已看视图 | 纠正一次后 `normal_candidate` | `test_four_region_case_that_used_to_fail_now_concludes` |
+| 全部区域 normal 仍以 `unknown` 结束 | 追问一次后 `normal_candidate` | `test_silent_abstention_gets_one_request_for_a_conclusion` |
+| 连续两次重复视图 | 停止并转人工 | `test_repeated_view_gets_one_corrective_call_then_stops` |
+| 纠正池共享（重复 + 解析失败） | 3 次调用内停止 | `test_corrections_share_one_bounded_pool` |
+| JSON 被代码块或散文包裹 | 提取后重新校验通过 | `test_fenced_or_wrapped_json_is_repaired_once` |
+| 响应中没有任何 JSON 对象 | `schema_error` 失败 | `test_text_without_an_object_still_fails` |
+| 区域提取被截断 | 策略开关决定是否拦截 | `test_truncation_vetoes_normal_only_when_the_policy_says_so` |
+| 可见异常 | `anomaly_candidate` | `test_visible_anomaly_can_finish_as_candidate` |
+| 局部 normal 试图覆盖已记录的异常 | 判为冲突并转人工 | `test_local_normal_cannot_erase_previously_visible_anomaly` |
+| 证据图只有 40×30 | 放大到最短边 256 | `test_small_evidence_crops_are_upscaled_to_the_minimum_side` |
