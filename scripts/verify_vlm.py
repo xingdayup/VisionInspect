@@ -12,7 +12,7 @@ configure_environment();started=time.perf_counter()
 with offline():
     config=load_config(ROOT/'configs/patchcore_cpu.yaml')
     manifest,validation=load_manifest(config,('validation',));_,training=load_manifest(config,('train',))
-    root=Path(manifest['root'])
+    root=(ROOT/config['dataset']['root'])
     model=LocalVLM(ROOT/'weights/smolvlm-500m',48)
     model.load();loaded=time.perf_counter()
     with Image.open(root/validation[0]['path']) as image,Image.open(root/training[0]['path']) as reference:

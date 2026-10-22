@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 import numpy as np
 from PIL import Image
@@ -82,6 +83,14 @@ def check_data(config: dict) -> dict:
                     source='Official MVTec AD; locally supplied files validated, archive provenance recorded separately',
                     records=records)
     manifest['digest'] = identity(manifest)
+    existing=project_path(settings['manifest'])
+    if os.environ.get('VISIONINSPECT_RELOCATED_ASSETS')=='1' and existing.is_file():
+        previous=read_json(existing)
+        if previous.get('digest')!=identity({k:v for k,v in previous.items() if k!='digest'}):
+            raise ValueError('Original manifest digest mismatch')
+        if {k:v for k,v in previous.items() if k not in {'root','digest'}}=={k:v for k,v in manifest.items() if k not in {'root','digest'}}:
+            # Preserve the source manifest identity used by the checkpoint and calibration.
+            return previous
     write_json(project_path(settings['manifest']), manifest)
     return manifest
 
@@ -90,14 +99,14 @@ def load_manifest(config: dict, splits: tuple[str, ...]) -> tuple[dict, list[dic
     manifest = read_json(project_path(config['dataset']['manifest']))
     if manifest['digest'] != identity({k:v for k,v in manifest.items() if k != 'digest'}):
         raise ValueError('Manifest digest mismatch')
-    if manifest['root'] != str(project_path(config['dataset']['root'])):
+    if manifest['root'] != str(project_path(config['dataset']['root'])) and os.environ.get('VISIONINSPECT_RELOCATED_ASSETS')!='1':
         raise ValueError('Manifest root does not match config')
     if manifest['seed'] != config['runtime']['seed'] or manifest['validation_ratio'] != config['dataset']['validation_ratio']:
         raise ValueError('Manifest split parameters do not match config')
     records = [r for r in manifest['records'] if r['split'] in splits]
     if not records:
         raise ValueError(f'Empty split: {splits}')
-    root = Path(manifest['root'])
+    root = project_path(config['dataset']['root'])
     # Only inspect selected split contents: fit/calibrate never open test images or masks.
     for record in records:
         for field, hash_field in [('path', 'sha256'), ('mask', 'mask_sha256')]:

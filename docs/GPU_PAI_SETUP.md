@@ -1,5 +1,7 @@
 # PAI DSW GPU 环境准备记录
 
+> v0.4 正式业务部署与命令以 [MIGRATION_PAI.md](MIGRATION_PAI.md) 为准。用户补充的审计已确认 BF16/FP16 小矩阵和 SDPA 通过；实际加载 `/usr/local/cuda-13.0/compat/libcuda.so.580.178.04`。这仍不证明 vLLM 原生内核或 Qwen 模型已运行。平台 cgroup 显示 16 CPU / 60 GiB 上限，项目仍按 8 CPU / 32 GiB 保守预算执行。
+
 2026-10-22。此阶段只做环境与版本核验；尚未安装 GPU 环境、下载 Qwen 权重、启动 vLLM 或验证 GPU 复核效果。远端由用户手动运行命令，没有 SSH 访问。
 
 ## 用户提供的实际信息
@@ -35,7 +37,7 @@ python3 scripts/audit_gpu_environment.py --output logs/gpu-environment-audit.jso
 
 ## 独立环境与资产预算
 
-计划项目路径为 /mnt/workspace/VisionInspect-GPU，推理环境为其 .venv-vllm；模型、缓存、临时文件、日志均放该项目下。不得向默认 /usr/local Python、Conda base 或其他项目环境直接装依赖，也不卸载现有 torch 2.13。安装前先核对磁盘、依赖冲突、发行文件预算并生成版本锁定记录。
+计划项目路径为 /mnt/systemDisk/VisionInspect-GPU，推理环境为其 .venv-vllm；模型、缓存、临时文件、日志均放该项目下。不得向默认 /usr/local Python、Conda base 或其他项目环境直接装依赖，也不卸载现有 torch 2.13。安装前先核对磁盘、依赖冲突、发行文件预算并生成版本锁定记录。
 
 2026-10-22 通过 PyPI 元数据核实的候选（未安装，不代表已完成兼容验收）：
 

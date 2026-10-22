@@ -17,6 +17,8 @@
 
 完整 Python 传递依赖见 requirements.txt / requirements-linux.txt，前端见 frontend/package-lock.json。安装包各自的 LICENSE 保留在分发中；此表不是对所有传递依赖的重新许可。
 
+v0.4 新增 LangGraph 1.2.16（MIT，https://github.com/langchain-ai/langgraph），版本及传递依赖锁定在 requirements-agent.txt / requirements-agent-linux.txt。GPU 运行复用用户 PAI 预装的 vLLM 0.27.1（Apache-2.0，https://github.com/vllm-project/vllm）。Qwen3-VL-8B-Instruct 固定 revision 0c351dd01ed87e9c1b53cbc748cba10e6187ff3b，Apache-2.0，https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct；截至本机交付尚未下载其 17.54 GB 权重或验证 GPU 推理。准备脚本按官方固定元数据和权重 SHA256 校验，不将模型许可套用于 MVTec 图片。
+
 EfficientAD teacher 已下载并核验，完整训练与评估仍未进行。实际 Anomalib 2.7.0 训练损失需要额外通用图像作为惩罚输入，不能仅凭模型名断言必须下载完整 ImageNet 或 Imagenette；二者仅是可考虑的数据来源。数据集图像的使用权需独立确认，Imagenette 仓库代码许可不自动覆盖所有原始图像权利。本地限定路径检查未建立授权数据清单，未下载此类数据或接受许可协议。详见 DATASETS.md。
 
 metal_nut / capsule / pill 已获用户逐类扩展授权，但每次下载仍须检查该类许可与预算。当前只新增 metal_nut 到盘；没有把它或 VisA、LOCO 混入既有 bottle 结果。项目自身代码尚未选择对外发布许可，不默认继承上游许可证。

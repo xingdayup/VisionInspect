@@ -7,7 +7,7 @@ from .service import TaskStore,registry
 def main():
     parser=argparse.ArgumentParser(description='本地 CPU 视觉质检 Agent')
     parser.add_argument('--image',type=Path,required=True);parser.add_argument('--category',default='bottle')
-    parser.add_argument('--model',default='patchcore');parser.add_argument('--mode',choices=['baseline','dynamic','fixed'],default='dynamic')
+    parser.add_argument('--model',default='patchcore');parser.add_argument('--mode',choices=['baseline','dynamic','fixed','agent_review'],default='dynamic')
     parser.add_argument('--vlm',action='store_true');args=parser.parse_args()
     if args.category not in registry() or args.model not in registry()[args.category]:parser.error('未注册的类别或模型')
     if not args.image.is_file():parser.error('输入图像不存在')

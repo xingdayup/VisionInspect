@@ -158,9 +158,11 @@ class ToolKit:
             regions.append(dict(id=f'R{len(regions)+1}',box=original_box,box_grid=box,pixels=area,
                                 maximum_score=float(anomaly_map[labels==index].max()),crop_path='evidence/'+filename))
             if len(regions)>=self.policy['regions']['maximum_regions']:break
+        total_regions=sum(int(stats[index,4])>=self.policy['regions']['minimum_pixels'] for index in range(1,count))
         return dict(crop_paths=[region['crop_path'] for region in regions],regions=regions,
                     evidence_summary=[f"{region['id']}: {region['pixels']} 个高分像素，框 {region['box']}" for region in regions],
-                    pixel_threshold=self.profile['pixel_threshold'],anomaly_area_ratio=float(binary.mean()))
+                    pixel_threshold=self.profile['pixel_threshold'],anomaly_area_ratio=float(binary.mean()),
+                    total_regions=total_regions,truncated=total_regions>len(regions))
 
     def classify_defect_candidate(self,request):
         if self.vlm is None:

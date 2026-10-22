@@ -64,3 +64,9 @@ uv pip check --python .venv\Scripts\python.exe
 当前无长期运行的项目服务。启动服务须由用户执行 scripts/start_local.ps1；数据与权重缺失时不会触发隐式下载。
 
 整理后校验：18 份文档内的 59 个本地链接均有效；10 个保护文件与两份移动文档的 SHA256 均保持一致。bottle 与 metal_nut 的 787 个数据文件重新核对 provenance 的字节数和 SHA256，通过。四个 PowerShell 运行入口的语法解析通过，没有因此启动服务或实验。
+
+## v0.4 业务与 PAI 迁移
+
+- [业务规格](BUSINESS_V1.md)
+- [迁移到 PAI](MIGRATION_PAI.md)
+- [实现、实测和待办](UPGRADE_STATUS.md)

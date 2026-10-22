@@ -17,7 +17,7 @@ def verify(skip_vlm=False):
     directory.mkdir()
     manifest,validation=load_manifest(load_config(ROOT/'configs/patchcore_cpu.yaml'),('validation',))
     sample=next(record for record in validation if record['path']=='train/good/002.png')
-    source=Path(manifest['root'])/sample['path'];body=source.read_bytes();tasks=[]
+    source=(ROOT/'data/mvtec_ad/bottle')/sample['path'];body=source.read_bytes();tasks=[]
     with TestClient(create_app(directory/'service')) as client:
         runtime=client.app.state.store.runtime
         configured_ttl=runtime.ttl

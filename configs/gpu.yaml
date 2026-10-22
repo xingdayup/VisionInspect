@@ -1,0 +1,12 @@
+schema_version: 1
+enabled: false
+root: /mnt/systemDisk/VisionInspect-GPU
+python: /usr/local/bin/python3
+endpoint: http://127.0.0.1:8001
+model: visioninspect-vlm
+idle_ttl_seconds: 600
+startup_timeout_seconds: 300
+request_timeout_seconds: 45
+max_model_calls: 3
+server_memory_limit_gib: 24
+project_memory_limit_gib: 28

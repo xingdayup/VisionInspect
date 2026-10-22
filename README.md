@@ -1,10 +1,26 @@
 # VisionInspect-Agent
 
-基于视觉异常检测与条件工具调用的中文质检工作台。上传产品图像后，系统执行质量检查、PatchCore 异常检测，并按需提取疑似区域、检索正常参考图、调用本地 VLM，输出可追溯的候选结论与证据。
+基于 PatchCore、工具调用和证据复核 Agent 的中文质检工作台，支持单图、批量任务、可追溯证据、逐项人工复核及报告导出。
 
-当前已验证 **MVTec AD bottle → PatchCore-ResNet18 CPU → Agent → FastAPI → Web 工作台** 的完整流程。项目面向非商业研究；`normal_candidate`、`anomaly_candidate`、`manual_review` 均为候选状态，不构成工业放行授权。
+已验证的视觉基线是 **MVTec AD bottle → PatchCore-ResNet18 CPU → FastAPI → Web 工作台**。新工作流使用 **LangGraph + 本地 vLLM / Qwen3-VL-8B** 进行多步复核；本机工程实现与测试已完成，PAI 上的真实 GPU 加载和生成仍待验收。项目面向非商业研究，候选结论不构成工业放行授权。
 
-## 当前状态
+## v0.4：业务闭环与迁移入口
+
+- [业务功能](docs/BUSINESS_V1.md)：每批最多 100 张，检测、不确定样本多步复核、逐项人工处理、JSON/CSV 导出。
+- [迁移到另一台 PAI 电脑](docs/MIGRATION_PAI.md)：Git bundle 离线 clone、独立校验资产包、隔离应用环境、显式准备 GPU 模型。
+- [本轮验证与待办](docs/UPGRADE_STATUS.md)：区分实现、单元测试、真实 CPU 验证和待 GPU 验证。
+
+工作台新增“批量质检”。“Agent 多步复核”需要完成 PAI GPU 配置；Windows 可继续选择“单模型”或明确标记的旧版规则流程。原始检测、Agent 复核和人工记录分别保存，人工记录不改写机器结果。
+
+代码已纳入本地 Git。`cpu-baseline-v0.3.0` 保留改造前版本；数据、权重、`.venv`、node_modules、结果和密钥不进入提交。生成迁移包：
+
+```powershell
+.\.venv\Scripts\python.exe -B scripts/package_migration.py
+```
+
+完整新安装使用 `requirements-agent.txt`（Windows）或 `requirements-agent-linux.txt`（Linux）；原 requirements.txt 仍保留 CPU 阶段锁。PAI 详细步骤和资源核验见迁移说明。
+
+## 已有 CPU 阶段与其他实验状态
 
 更新日期：2026-10-22。以下区分实现、实测与待办，完整索引见 [项目文档](docs/README.md)。
 
@@ -29,7 +45,7 @@ Set-Location -LiteralPath 'E:\秋招\项目\VisionInspect'
 .\scripts\start_local.ps1
 ```
 
-打开 <http://127.0.0.1:8000>，选择 **bottle / PatchCore**，上传 PNG、JPEG 或 WebP 图像。单图上限 10 MiB、16,777,216 像素。工作流可选单模型、动态 Agent、固定复核；VLM 默认关闭，开启后仅生成未经验证的候选描述。
+打开 <http://127.0.0.1:8000>，选择 **bottle / PatchCore**，上传 PNG、JPEG 或 WebP。单图上限 10 MiB、16,777,216 像素。CPU 旧版候选描述与新的 GPU 多步复核是独立工作流，旧 VLM 默认关闭。
 
 项目 PowerShell 脚本使用 **UTF-8 with BOM**，兼容 Windows 自带 PowerShell 5.1。已修复无 BOM 中文被错误解码导致的 ParserError，并在 5.1 实际启动验证首页、health、ready 均返回 200。编辑 `.ps1` 时请保留 BOM；排查说明见 [运行文档](docs/RUNNING.md)。
 

@@ -1,16 +1,31 @@
 """REST API for the local research workstation. Start one server worker only."""
 from contextlib import asynccontextmanager
-from io import BytesIO
-import re
+from io import BytesIO,StringIO
+import re,csv
 from pathlib import Path
 from fastapi import FastAPI,File,Form,HTTPException,Query,Request,UploadFile
-from fastapi.responses import FileResponse,JSONResponse
+from fastapi.responses import FileResponse,JSONResponse,Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel,ConfigDict,Field,field_validator
 from PIL import Image,UnidentifiedImageError
 from .common import ROOT,project_path,read_json,configure_environment
 from .schemas import TOOL_CONTRACTS
 from .service import TaskStore,model_health,registry
+from .vllm_runtime import gpu_config,gpu_assets_available
+from .review_contracts import ReviewDecision
+
+class BatchRequest(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    name: str=Field(min_length=1,max_length=120)
+    category: str='bottle'
+    model: str='patchcore'
+    mode: str='agent_review'
+    vlm: bool=False
+    @field_validator('name')
+    @classmethod
+    def clean_name(cls,value):
+        if not value.strip():raise ValueError('批次名称不能为空')
+        return value.strip()
 
 class ReviewRequest(BaseModel):
     model_config=ConfigDict(extra='forbid')
@@ -26,7 +41,7 @@ class UploadBodyLimit:
     """Cap multipart bodies before parser spooling; all temp files remain in the project."""
     def __init__(self,app):self.app=app
     async def __call__(self,scope,receive,send):
-        if scope['type']!='http' or scope['method']!='POST' or scope['path']!='/api/tasks':
+        if scope['type']!='http' or scope['method']!='POST' or not (scope['path']=='/api/tasks' or re.fullmatch(r'/api/batches/[0-9a-f]{32}/items',scope['path'])):
             return await self.app(scope,receive,send)
         limit=10*1024**2+64*1024;chunks=[];total=0
         headers=dict(scope.get('headers',[]))
@@ -55,7 +70,7 @@ def create_app(state_directory:Path|None=None):
         application.state.store=TaskStore(state_directory)
         try:yield
         finally:application.state.store.close()
-    application=FastAPI(title='VisionInspect-Agent',version='0.3.0',lifespan=lifespan)
+    application=FastAPI(title='VisionInspect-Agent',version='0.4.0',lifespan=lifespan)
     application.add_middleware(UploadBodyLimit)
     def store(request):
         if not hasattr(request.app.state,'store'):request.app.state.store=TaskStore(state_directory)
@@ -65,12 +80,47 @@ def create_app(state_directory:Path|None=None):
         except KeyError:raise HTTPException(404,detail='任务不存在')
         except (OSError,ValueError):raise HTTPException(409,detail='任务记录损坏或无法读取，请检查日志或重新提交')
 
+    def get_batch(request,batch_id):
+        try:return store(request).get_batch(batch_id)
+        except KeyError:raise HTTPException(404,detail='批次不存在')
+
+    def validate_selection(category,model,mode,vlm=False):
+        if mode not in {'baseline','fixed','dynamic','agent_review'}:raise HTTPException(422,detail='不支持的工作流')
+        if category not in registry() or model not in registry()[category] or model=='label':
+            raise HTTPException(422,detail='未注册的产品类别或模型')
+        selected=next(m for m in model_health() if m['category']==category and m['model']==model)
+        if not selected['available']:raise HTTPException(503,detail=selected['reason'])
+        if mode=='agent_review' and not gpu_assets_available(gpu_config()):
+            raise HTTPException(503,detail='Agent GPU 服务未配置或模型资产缺失，请准备 PAI 服务或选择单模型检测')
+        if vlm and mode in {'fixed','dynamic'} and not (ROOT/'weights/smolvlm-500m/source.json').is_file():
+            raise HTTPException(503,detail='本地 VLM 权重缺失，请关闭候选解释或准备资产')
+
+    async def image_body(file):
+        content=bytearray()
+        while block:=await file.read(256*1024):
+            content.extend(block)
+            if len(content)>10*1024**2:raise HTTPException(413,detail='图像超过 10 MiB 上限')
+        try:
+            with Image.open(BytesIO(content)) as image:
+                if image.format not in {'PNG','JPEG','WEBP'}:raise ValueError('只支持 PNG、JPEG、WebP')
+                if image.width*image.height>16777216:raise ValueError('图像超过 1600 万像素上限')
+                image.verify()
+        except UnidentifiedImageError:
+            raise HTTPException(422,detail='图像无法识别，请检查文件内容是否损坏或格式是否正确')
+        except OSError:
+            raise HTTPException(422,detail='图像无法完整解码，请重新导出图片后上传')
+        except (ValueError,Image.DecompressionBombError) as error:
+            raise HTTPException(422,detail=f'图像不可用：{error}')
+        return bytes(content),(file.filename or 'image').replace('\\','/').split('/')[-1][:160]
+
     @application.get('/health')
     def health():
         models=model_health()
+        gpu=gpu_config()
         return dict(status='ok',phase='integrated',inference_service=any(m['available'] for m in models),
                     models=models,device='CPU',precision='FP32',worker_concurrency=1,paid_api=False,
                     vlm_available=(ROOT/'weights/smolvlm-500m/source.json').is_file(),
+                    agent_review_available=gpu_assets_available(gpu),vlm_backend='vllm' if gpu['enabled'] else 'disabled',
                     weights_present=(ROOT/'weights/resnet18.a1_in1k/model.safetensors').is_file(),
                     dataset_manifest_present=(ROOT/'data/manifests/bottle.json').is_file())
 
@@ -83,37 +133,23 @@ def create_app(state_directory:Path|None=None):
     def models():return model_health()
 
     @application.get('/api/runtime')
-    def runtime(request:Request):return store(request).runtime.status()
+    def runtime(request:Request):return dict(store(request).runtime.status(),gpu=store(request).gpu.status())
 
     @application.get('/api/tools/schemas')
     def schemas():
-        return {name:dict(input=a.model_json_schema(),output=b.model_json_schema(),service_implemented=True)
+        result={name:dict(input=a.model_json_schema(),output=b.model_json_schema(),service_implemented=True)
                 for name,(a,b) in TOOL_CONTRACTS.items()}
+        result['review_evidence']=dict(input=dict(type='object',description='当前图片证据与有界工作流上下文'),output=ReviewDecision.model_json_schema(),service_implemented=True)
+        return result
 
     @application.post('/api/tasks',status_code=202)
     async def create_task(request:Request,file:UploadFile=File(...),category:str=Form('bottle'),
                           model:str=Form('patchcore'),mode:str=Form('dynamic'),vlm:bool=Form(False)):
-        if mode not in {'baseline','fixed','dynamic'}:raise HTTPException(422,detail='不支持的工作流')
-        if mode=='baseline':vlm=False
-        if category not in registry() or model not in registry()[category] or model=='label':
-            raise HTTPException(422,detail='未注册的产品类别或模型')
+        if mode in {'baseline','agent_review'}:vlm=False
+        validate_selection(category,model,mode,vlm)
         # Stream with an explicit cap; reject before model inference and do not use client paths.
-        content=bytearray()
-        while block:=await file.read(256*1024):
-            content.extend(block)
-            if len(content)>10*1024**2:raise HTTPException(413,detail='图像超过 10 MiB 上限')
-        try:
-            with Image.open(BytesIO(content)) as image:
-                if image.format not in {'PNG','JPEG','WEBP'}:raise ValueError('只支持 PNG、JPEG、WebP')
-                if image.width*image.height>16777216:raise ValueError('图像超过 1600 万像素上限')
-                image.verify()
-        except (OSError,ValueError,Image.DecompressionBombError) as error:
-            raise HTTPException(422,detail=f'图像不可用：{error}')
-        selected=next(m for m in model_health() if m['category']==category and m['model']==model)
-        if not selected['available']:raise HTTPException(503,detail=selected['reason'])
-        if vlm and not (ROOT/'weights/smolvlm-500m/source.json').is_file():raise HTTPException(503,detail='本地 VLM 权重缺失，请关闭候选解释或准备资产')
-        filename=(file.filename or 'image').replace('\\','/').split('/')[-1][:160]
-        try:return store(request).create(bytes(content),filename,category,model,mode,vlm)
+        content,filename=await image_body(file)
+        try:return store(request).create(content,filename,category,model,mode,vlm)
         except OverflowError as error:raise HTTPException(429,detail=str(error))
 
     @application.get('/api/tasks')
@@ -137,12 +173,71 @@ def create_app(state_directory:Path|None=None):
         try:return store(request).review(task_id,value.decision,value.note.strip())
         except ValueError as error:raise HTTPException(409,detail=str(error))
 
+    @application.post('/api/tasks/{task_id}/retry',status_code=202)
+    def retry(request:Request,task_id:str):
+        get_task(request,task_id)
+        try:return store(request).retry(task_id)
+        except ValueError as error:raise HTTPException(409,detail=str(error))
+        except OverflowError as error:raise HTTPException(429,detail=str(error))
+
+    @application.post('/api/batches',status_code=201)
+    def create_batch(request:Request,value:BatchRequest):
+        validate_selection(value.category,value.model,value.mode,value.vlm)
+        return store(request).create_batch(value.name,value.category,value.model,value.mode,value.vlm if value.mode in {'fixed','dynamic'} else False)
+
+    @application.get('/api/batches')
+    def batches(request:Request,limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0)):
+        return store(request).list_batches(limit,offset)
+
+    @application.get('/api/batches/{batch_id}')
+    def batch(request:Request,batch_id:str):return get_batch(request,batch_id)
+
+    @application.post('/api/batches/{batch_id}/items',status_code=201)
+    async def upload_batch_item(request:Request,batch_id:str,file:UploadFile=File(...)):
+        batch=get_batch(request,batch_id)
+        try:content,filename=await image_body(file)
+        except HTTPException as error:
+            filename=(file.filename or 'image').replace('\\','/').split('/')[-1][:160]
+            store(request).record_upload_error(batch_id,filename,str(error.detail))
+            raise
+        try:return store(request).create(content,filename,batch['category'],batch['model'],batch['mode'],bool(batch['vlm']),batch_id)
+        except ValueError as error:raise HTTPException(409,detail=str(error))
+        except OverflowError as error:raise HTTPException(429,detail=str(error))
+
+    @application.post('/api/batches/{batch_id}/actions/{action}')
+    def batch_action(request:Request,batch_id:str,action:str):
+        get_batch(request,batch_id)
+        try:return store(request).batch_action(batch_id,action)
+        except ValueError as error:raise HTTPException(409,detail=str(error))
+
+    @application.get('/api/batches/{batch_id}/report')
+    def batch_report(request:Request,batch_id:str,format:str=Query('json',pattern='^(json|csv)$')):
+        batch=get_batch(request,batch_id);items=[]
+        for item in batch['items']:
+            try:items.append(store(request).get(item['id']))
+            except (OSError,ValueError):items.append(dict(item,artifact_error='报告损坏或缺失'))
+        if format=='json':
+            return JSONResponse(dict(schema_version=2,batch=batch,tasks=items),headers={'Content-Disposition':f'attachment; filename="batch-{batch_id}.json"'})
+        stream=StringIO();writer=csv.writer(stream)
+        writer.writerow(['task_id','filename','status','initial_state','agent_state','effective_state','source','score','human_note','retry_of'])
+        for item in items:
+            report=item.get('report') or {};effective=store(request).effective(item)
+            cells=[item['id'],item['filename'],item['status'],(report.get('initial_result') or report.get('result') or {}).get('state',''),
+                   (report.get('result') or {}).get('state',''),effective.get('state',''),effective['source'],
+                   ((report.get('outputs') or {}).get('detection') or {}).get('score',''),(item.get('review') or {}).get('note',''),item.get('retry_of') or '']
+            writer.writerow(["'"+cell if isinstance(cell,str) and cell and cell.lstrip()[:1] in '=+-@\t\r\n' else cell for cell in cells])
+        return Response(('\ufeff'+stream.getvalue()).encode('utf8'),media_type='text/csv; charset=utf-8',
+                        headers={'Content-Disposition':f'attachment; filename="batch-{batch_id}.csv"'})
+
     @application.get('/api/tasks/{task_id}/artifacts/{filename}')
     def artifact(request:Request,task_id:str,filename:str):
         get_task(request,task_id)
-        if not re.fullmatch(r'(original|inspection_heatmap|inspection_overlay|reference_[12]|region_[1-4])\.png|inspection\.npy',filename):
+        if not re.fullmatch(r'(original|inspection_heatmap|inspection_overlay|reference_[12]|region_[1-4]|review_R[1-4]_ref_[12]|vlm_round_[1-3]_image_[1-3])\.png|inspection\.npy',filename):
             raise HTTPException(404,detail='证据文件不存在')
         path=store(request).directory(task_id)/'evidence'/filename
+        vlm_image=re.fullmatch(r'vlm_round_([1-3])_image_([1-3])\.png',filename)
+        if vlm_image:
+            path=store(request).directory(task_id)/'vlm_input'/f'round_{vlm_image[1]}'/f'image_{vlm_image[2]}.png'
         if not path.is_file():raise HTTPException(404,detail='证据文件尚未生成或已缺失')
         return FileResponse(path,media_type='image/png' if filename.endswith('.png') else 'application/octet-stream')
 

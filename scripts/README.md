@@ -57,3 +57,14 @@
 | `final_audit.py` | 写当前环境、保护文件哈希、主要目录逻辑大小；可能双计硬链接，不是物理磁盘增量 |
 
 原始主机只读命令位于 docs/audit/phase0_readonly.ps1。工具失败和超预算应保留日志并报告，不改系统环境或自动降低正式配置。
+
+## v0.4 新入口
+
+- `run_upgrade_checks.py`：有限测试、构建、Git 内容检查与命令/退出码记录。
+- `verify_upgrade_cpu.py`：真实正常验证图、CPU 一致性和 GPU 不可用恢复，不产生效果指标。
+- `package_migration.py` / `install_assets.py`：独立 Git bundle 与校验资产包，禁止覆盖不同文件。
+- `preflight_pai_app.py` / `setup_pai.sh`：PAI 应用 wheel/预算预检、仅在项目独立环境安装。
+- `pai_vllm.py`：只读检查、固定模型预检和显式下载；`vllm_managed.py` 由应用管理，不手动常驻。
+- `verify_pai_review.py` / `start_pai.sh`：需在 PAI 手动执行的真实 GPU 验证与前台启动。
+
+详细命令及待验证条件见 [迁移文档](../docs/MIGRATION_PAI.md)。

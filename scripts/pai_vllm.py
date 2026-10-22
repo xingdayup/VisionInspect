@@ -98,6 +98,21 @@ def verified(path,item):
 def model_dir(root):return root/'weights/qwen3-vl-8b-instruct'
 
 
+def validate_source(root):
+    directory=model_dir(root);source=read(directory/'source.json')
+    if source.get('model')!=MODEL or source.get('revision')!=REVISION or source.get('license')!='Apache-2.0':
+        raise ValueError('Asset source mismatch')
+    files=source.get('files',[])
+    if len(files)!=len(NAMES) or {f.get('rfilename') for f in files}!=NAMES:
+        raise ValueError('Required asset list differs')
+    for item in files:
+        name=item['rfilename']
+        if name in WEIGHTS and (item['size'],item.get('lfs',{}).get('sha256'))!=WEIGHTS[name]:
+            raise ValueError('Pinned weight metadata differs')
+        if not verified(directory/name,item):raise ValueError(f'Asset missing/corrupt: {name}')
+    return source
+
+
 def download(root):
     if not read(root/'logs/runtime-check.json').get('passed'):raise RuntimeError('Run check first')
     preflight(root);report=read(root/'logs/model-preflight.json')
@@ -125,12 +140,15 @@ def server_command(root):
         '--mm-processor-cache-gb','0.25','--no-trust-remote-code']
 
 
+def server_environment():
+    guard=str(Path(__file__).resolve().parent/'runtime_guard')
+    return dict(os.environ,VISIONINSPECT_VLLM_OFFLINE='1',VLLM_HOST_IP='127.0.0.1',
+                PYTHONPATH=guard+os.pathsep+os.environ.get('PYTHONPATH',''))
+
+
 def serve(root,seconds):
     if sys.platform!='linux':raise RuntimeError('Serve must run on the PAI Linux GPU machine')
-    check(root);directory=model_dir(root);source=read(directory/'source.json')
-    if source['model']!=MODEL or source['revision']!=REVISION:raise ValueError('Asset source mismatch')
-    for item in source['files']:
-        if not verified(directory/item['rfilename'],item):raise ValueError(f"Asset missing/corrupt: {item['rfilename']}")
+    check(root);validate_source(root)
     with socket.socket() as port_check:
         port_check.bind(('127.0.0.1',8001))
     import psutil
@@ -138,11 +156,12 @@ def serve(root,seconds):
     write(root/'logs/serve-command.json',dict(command=command,maximum_seconds=seconds,startup_seconds=300,
         host_memory_limit_bytes=24*1024**3,debug_service=True,idle_ttl_implemented=False))
     log_path=root/'logs/vllm-server.log';failure=None;peak=0;ready=False
-    process=None;tracked={};local_http=build_opener(ProxyHandler({}))
+    process=None;reader=None;tracked={};local_http=build_opener(ProxyHandler({}))
+    log=log_path.open('w',encoding='utf8')
     try:
-        with log_path.open('w',encoding='utf8') as log:
+        if True:
             process=subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,
-                                     encoding='utf8',errors='replace',start_new_session=True)
+                                     encoding='utf8',errors='replace',start_new_session=True,env=server_environment())
             def relay():
                 for line in process.stdout:
                     log.write(line);log.flush();print(line,end='',flush=True)
@@ -179,6 +198,8 @@ def serve(root,seconds):
                 try:
                     if member.is_running():member.kill()
                 except psutil.NoSuchProcess:pass
+        if reader:reader.join(timeout=5)
+        log.close()
         write(root/'logs/serve-execution.json',dict(command=command,ready_observed=ready,
             seconds=time.monotonic()-started,peak_process_tree_rss_bytes=peak,
             process_exit_code=process.returncode if process else None,stop_reason=failure,
@@ -215,6 +236,7 @@ if __name__=='__main__':
     args=parser.parse_args();root=args.root.resolve()
     if not 1<=args.seconds<=3600:parser.error('--seconds must be between 1 and 3600')
     if args.command=='probe' and args.image is None:parser.error('probe requires --image')
+    if sys.platform!='linux':parser.error('Run GPU preparation commands on the PAI Linux machine')
     root.mkdir(parents=True,exist_ok=True);configure(root,offline=args.command in {'check','serve','probe'})
     started=time.monotonic();error=None
     try:
@@ -227,6 +249,6 @@ if __name__=='__main__':
     except Exception as failure:
         error=f'{type(failure).__name__}: {failure}';raise
     finally:
-        write(root/f'logs/{args.command}-execution.json',dict(command=sys.argv,error=error,
+        write(root/f'logs/{args.command}-command-execution.json',dict(command=sys.argv,error=error,
             seconds=time.monotonic()-started,exit_code=1 if error else 0,
             packages_installed=False,model_download_requested=args.command=='download'))

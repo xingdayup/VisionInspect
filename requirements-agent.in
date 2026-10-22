@@ -1,0 +1,2 @@
+-r requirements.in
+langgraph==1.2.16

@@ -43,7 +43,7 @@ def run(mode,enable_vlm,category='bottle'):
     if enable_vlm:
         from visioninspect.vlm import LocalVLM
         vlm=LocalVLM(project_path(policy['vlm']['directory']),policy['vlm']['max_new_tokens']);vlm.load()
-    manifest,records=load_manifest(config,('test',));root=Path(manifest['root']);rows=[];start=time.perf_counter()
+    manifest,records=load_manifest(config,('test',));root=(ROOT/config['dataset']['root']);rows=[];start=time.perf_counter()
     for i,record in enumerate(records):
         output=directory/f'{i:03d}';tools=ToolKit(registration,policy,output,vlm);tools._detector=detector
         report=InspectionAgent(tools,policy).run(str(root/record['path']),category,mode)

@@ -17,7 +17,7 @@ def prepare(category='bottle'):
     fit=project_path(registration['fit_run']);calibration=read_json(fit/'calibration.json')
     detector,metadata=Detector.load(fit/'model.ckpt')
     manifest,training=load_manifest(config,('train',));_,validation=load_manifest(config,('validation',))
-    root=Path(manifest['root']);vectors=[];quality=[];maps=[];scores=[]
+    root=(ROOT/config['dataset']['root']);vectors=[];quality=[];maps=[];scores=[]
     import torch
     def embedding(array):
         with torch.inference_mode():

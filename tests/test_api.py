@@ -23,7 +23,8 @@ def test_metrics_errors_and_schema_inventory():
     assert client.get('/api/runs/no-such-run/metrics').status_code==400
     assert client.get('/api/runs/20261021-000000-evaluate-abcdef/metrics').status_code==404
     schemas=client.get('/api/tools/schemas').json()
-    assert len(schemas)==6
+    assert len(schemas)==7
+    assert 'review_evidence' in schemas
     assert all(value['service_implemented'] for value in schemas.values())
 
 

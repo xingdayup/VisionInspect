@@ -48,6 +48,8 @@ class RegionResult(Contract):
     regions: list[dict]
     pixel_threshold: FiniteFloat
     anomaly_area_ratio: float = Field(ge=0,le=1)
+    total_regions: int = 0
+    truncated: bool = False
 
 
 class CandidateResult(Contract):

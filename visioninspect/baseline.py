@@ -83,7 +83,7 @@ def worker(args, config, output):
                 raise ValueError('Smoke needs 16 training images')
         detector = Detector(config, size=128 if smoke else None)
         backbone_hash = detector.load_backbone()
-        detector.fit(Path(manifest['root']), train, lambda message: print(message, flush=True))
+        detector.fit(project_path(config['dataset']['root']), train, lambda message: print(message, flush=True))
         metadata = dict(manifest_digest=manifest['digest'], backbone_sha256=backbone_hash,
                         config_digest=identity(config), purpose='smoke' if smoke else 'formal')
         checkpoint = output/'model.ckpt'
@@ -99,9 +99,9 @@ def worker(args, config, output):
             validation = validation[:4]
             if len(validation) != 4:
                 raise ValueError('Smoke needs 4 validation images')
-            results, maps = predictions(detector, Path(manifest['root']), validation, output)
+            results, maps = predictions(detector, project_path(config['dataset']['root']), validation, output)
             reloaded, _ = Detector.load(checkpoint)
-            with Image.open(Path(manifest['root'])/validation[0]['path']) as image:
+            with Image.open(project_path(config['dataset']['root'])/validation[0]['path']) as image:
                 score, anomaly_map, _ = reloaded.predict(np.asarray(image.convert('RGB')))
             np.testing.assert_allclose(score, results[0]['score'], rtol=1e-5, atol=1e-6)
             np.testing.assert_allclose(anomaly_map, maps[0], rtol=1e-5, atol=1e-6)
@@ -121,7 +121,7 @@ def worker(args, config, output):
             if calibration_path.exists():
                 raise FileExistsError('Calibration already frozen for this fit; create a new experiment to change it')
             from .metrics import calibrate
-            results, _ = predictions(detector, Path(manifest['root']), records, output)
+            results, _ = predictions(detector, project_path(config['dataset']['root']), records, output)
             threshold = calibrate(results, config['evaluation']['quantile'])
             calibration = dict(threshold=threshold, quantile=config['evaluation']['quantile'], method='higher',
                                validation_count=len(records), checkpoint_sha256=fit_result['checkpoint_sha256'],
@@ -138,7 +138,7 @@ def worker(args, config, output):
             raise ValueError('Calibration identity mismatch')
         calibration_hash = sha256(calibration_path)
         _, validation = load_manifest(config, ('validation',))
-        results, maps = predictions(detector, Path(manifest['root']), records, output,
+        results, maps = predictions(detector, project_path(config['dataset']['root']), records, output,
                                     warmup_record=validation[0], warmup=config['evaluation']['warmup'])
         import numpy as np
         from PIL import Image
@@ -146,7 +146,7 @@ def worker(args, config, output):
         masks = []
         for record in records:
             if record['label']:
-                with Image.open(Path(manifest['root'])/record['mask']) as image:
+                with Image.open(project_path(config['dataset']['root'])/record['mask']) as image:
                     mask = np.asarray(image.resize((detector.size, detector.size), Image.Resampling.NEAREST)) > 0
                 if not mask.any():
                     raise ValueError(f'Anomaly mask vanished during resize: {record["mask"]}')

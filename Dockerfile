@@ -14,8 +14,8 @@ ENV UV_PYTHON_DOWNLOADS=never UV_TORCH_BACKEND=cpu \
     PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 HF_HUB_OFFLINE=1 \
     VISIONINSPECT_STATE_DIR=/app/outputs/service
-COPY requirements-linux.txt /app/requirements-linux.txt
-RUN uv venv /app/.venv && uv pip sync /app/requirements-linux.txt --python /app/.venv/bin/python --torch-backend cpu --require-hashes
+COPY requirements-agent-linux.txt /app/requirements-agent-linux.txt
+RUN uv venv /app/.venv && uv pip sync /app/requirements-agent-linux.txt --python /app/.venv/bin/python --torch-backend cpu --require-hashes
 COPY visioninspect /app/visioninspect
 COPY configs /app/configs
 COPY --from=frontend /web/dist /app/frontend/dist

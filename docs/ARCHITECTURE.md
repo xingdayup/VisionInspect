@@ -53,3 +53,7 @@ VLM 当前使用 separate-images-v2：完整待检图与第一张正常参考图
 ## 本地部署范围
 
 当前服务面向单机研究，无账户体系、产线接口或公网部署授权。默认绑定 127.0.0.1。使用一个 uvicorn worker，不能用多个服务进程共同写同一状态目录。SQLite 与文件保持在项目 outputs 下。Docker 为 CPU 镜像，数据、模型和实验目录通过 volume 提供；GPU 支持未验证，不自动切换 CUDA 构建。
+
+## v0.4 新工作流
+
+`agent_review` 使用 LangGraph 管理 baseline → decision → evidence tool → decision → finalize 循环。Qwen3-VL 经独立 vLLM 服务返回结构化观察与白名单动作；Python 绑定证据、验证区域覆盖并决定候选状态。旧 baseline/fixed/dynamic 保留兼容。SQLite 持久调度单图与批次，分别保留机器、Agent、人工结果。CPU worker 与 GPU 服务独立 TTL，GPU 失败保留 CPU 结果。业务规格与部署以 BUSINESS_V1.md、MIGRATION_PAI.md 为准，GPU 实机验证状态见 UPGRADE_STATUS.md。
