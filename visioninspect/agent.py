@@ -1,24 +1,46 @@
 """Deterministic GPU detection and evidence preparation for the review graph."""
 
 from __future__ import annotations
+
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 from pydantic import ValidationError
+
 from .schemas import FinalResult
 from .tools import ToolFailure
 
+if TYPE_CHECKING:
+    from .tools import ToolKit
+
 
 class InspectionAgent:
-    def __init__(self, tools, policy, progress=None):
+    """Run quality gating, detection and evidence collection for one image.
+
+    This class never decides the final verdict: it gathers evidence and hands a
+    completeness report to finalize_inspection. Budgets, timeouts and retries are
+    enforced here so a single tool cannot consume the whole task.
+    """
+
+    def __init__(
+        self,
+        tools: ToolKit,
+        policy: dict,
+        progress: Callable[[dict], None] | None = None,
+    ) -> None:
         self.tools = tools
         self.policy = policy
         self.progress = progress or (lambda value: None)
-        self.trace = []
-        self.errors = []
-        self.started = 0
-        self.initialization = None
+        self.trace: list[dict] = []
+        self.errors: list[str] = []
+        self.started = 0.0
+        self.initialization: dict | None = None
 
-    def prepare_detection(self):
+    def prepare_detection(self) -> bool:
+        """Load model assets inside a separate, explicitly budgeted stage."""
         prepare = getattr(self.tools, "prepare_detector", None)
         if (
             not callable(prepare)
@@ -69,9 +91,21 @@ class InspectionAgent:
         )
         return failure is None
 
-    def call(self, name, arguments, reason, final=False):
+    def call(
+        self,
+        name: str,
+        arguments: dict,
+        reason: str,
+        final: bool = False,
+    ) -> dict | None:
+        """Invoke one tool with budget, timeout and retry guards.
+
+        Returns None when the call is refused or exhausts its retries; the
+        reason is appended to errors so the report can explain the degradation.
+        """
         attempts = self.policy["max_retries"] + 1
         for attempt in range(attempts):
+            # Keep one budget slot so a failing tool still leaves room to finalize.
             reserve = 0 if final else 1
             if len(self.trace) >= self.policy["max_tool_calls"] - reserve:
                 self.errors.append("budget_exceeded: 工具调用预算已用尽")
@@ -84,7 +118,7 @@ class InspectionAgent:
                 tool=name,
                 reason=reason,
                 input=arguments,
-                started_at=datetime.now(timezone.utc).isoformat(),
+                started_at=datetime.now(UTC).isoformat(),
                 attempt=attempt + 1,
                 status="running",
             )
@@ -121,12 +155,15 @@ class InspectionAgent:
             return result
         return None
 
-    def run(self, image_path, category, mode="agent_review"):
+    def run(
+        self, image_path: str | Path, category: str, mode: str = "agent_review"
+    ) -> dict:
+        """Execute quality, detection and evidence extraction in a fixed order."""
         if mode not in {"baseline", "agent_review"}:
             raise ValueError("Unknown inspection mode")
         self.started = time.perf_counter()
         request = dict(image_path=str(image_path), category=category)
-        outputs = {}
+        outputs: dict[str, object] = {}
         quality = self.call(
             "inspect_image_quality", request, "先检查图像是否可可靠解读"
         )
@@ -135,7 +172,7 @@ class InspectionAgent:
         detection = None
         ambiguous = False
         conflict = False
-        evidence = []
+        evidence: list[str] = []
         if quality_ok:
             if self.prepare_detection():
                 detection = self.call(

@@ -1,14 +1,23 @@
+"""Persist anomaly evidence as raw float maps plus display-only renders."""
+
 from __future__ import annotations
 
 from pathlib import Path
+
 import numpy as np
 from PIL import Image
 
 
-def save_evidence(output: Path, key: str, array: np.ndarray, anomaly_map: np.ndarray):
+def save_evidence(
+    output: Path, key: str, array: np.ndarray, anomaly_map: np.ndarray
+) -> dict[str, object]:
+    """Write the raw map and two renders, returning filenames and display scale.
+
+    The min/max stretch below is a visualization detail only; every metric and
+    threshold decision uses the untouched float map saved as key + '.npy'.
+    """
     output.mkdir(parents=True, exist_ok=True)
     np.save(output / (key + ".npy"), anomaly_map, allow_pickle=False)
-    # Min/max normalization is only for display; metrics always use raw float maps.
     low, high = float(anomaly_map.min()), float(anomaly_map.max())
     display = (anomaly_map - low) / max(high - low, 1e-12)
     import matplotlib

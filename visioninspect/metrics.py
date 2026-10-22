@@ -1,3 +1,5 @@
+"""Calibration and evaluation metrics for anomaly detection runs."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -11,6 +13,11 @@ from sklearn.metrics import (
 
 
 def calibrate(records: list[dict], quantile: float = 0.95) -> float:
+    """Return the frozen score threshold from normal validation predictions only.
+
+    Test and anomaly records are rejected here so a threshold can never be
+    tuned on data the evaluation later reports against.
+    """
     if not records or any(
         r.get("split") != "validation" or r.get("label") != 0 for r in records
     ):
@@ -21,7 +28,19 @@ def calibrate(records: list[dict], quantile: float = 0.95) -> float:
     return float(np.quantile(scores, quantile, method="higher"))
 
 
-def evaluate(labels, scores, maps, masks, threshold, fpr_limit=0.3):
+def evaluate(
+    labels: list[int],
+    scores: list[float],
+    maps: list[np.ndarray] | np.ndarray,
+    masks: list[np.ndarray] | np.ndarray,
+    threshold: float,
+    fpr_limit: float = 0.3,
+) -> dict[str, object]:
+    """Compute image-level, pixel-level and AUPRO metrics in one pass.
+
+    Requires both classes to be present; a one-sided set would silently produce
+    a meaningless AUROC instead of an error.
+    """
     import torch
     from anomalib.metrics.aupro import _AUPRO
 

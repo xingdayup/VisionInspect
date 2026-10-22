@@ -1,10 +1,14 @@
 """One CUDA detector and its reference index, owned by one inference process."""
 
+from __future__ import annotations
+
 from pathlib import Path
+
 from .common import identity, project_path
 
 
-def file_stamp(path):
+def file_stamp(path: str | Path) -> list[object]:
+    """Describe a file by identity-relevant metadata, or by path alone if absent."""
     path = Path(path).resolve()
     try:
         stat = path.stat()
@@ -20,12 +24,20 @@ def file_stamp(path):
 
 
 class ModelCache:
-    def __init__(self):
-        self.detector_key = None
-        self.detector = None
-        self.references = None
+    """Hold at most one detector plus its reference index.
 
-    def bind_detector(self, registration, profile):
+    Frozen assets are never re-read mid-run: bind_detector compares a digest
+    over the registration, the calibration profile and the on-disk file stamps,
+    and drops cached state whenever that digest changes.
+    """
+
+    def __init__(self) -> None:
+        self.detector_key: str | None = None
+        self.detector: object | None = None
+        self.references: tuple[object, ...] | None = None
+
+    def bind_detector(self, registration: dict, profile: dict) -> None:
+        """Drop cached state when the bound model assets have changed."""
         paths = [
             project_path(registration["fit_run"]) / "model.ckpt",
             project_path(registration["profile"]),
@@ -43,7 +55,8 @@ class ModelCache:
             self.references = None
             self.detector_key = key
 
-    def status(self):
+    def status(self) -> dict[str, object]:
+        """Report only what is cached, never the model weights themselves."""
         return dict(
             detector_loaded=self.detector is not None,
             references_loaded=self.references is not None,

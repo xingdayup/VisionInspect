@@ -1,23 +1,39 @@
-"""REST API for the local research workstation. Start one server worker only."""
+"""REST API for the local research workstation. Start one server worker only.
 
+Route handlers return plain mappings; FastAPI serializes them as-is. Every
+endpoint that mutates state goes through TaskStore, which owns the SQLite
+queue, so the API layer stays free of scheduling logic.
+"""
+
+from __future__ import annotations
+
+import csv
+import re
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from io import BytesIO, StringIO
-import re
-import csv
 from pathlib import Path
+
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 from PIL import Image, UnidentifiedImageError
-from .common import ROOT, read_json, configure_environment
-from .schemas import TOOL_CONTRACTS
-from .service import TaskStore, model_health, registry, cuda_available
-from .vllm_runtime import gpu_config, gpu_assets_available
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .common import ROOT, configure_environment, read_json
 from .review_contracts import ReviewDecision
+from .schemas import TOOL_CONTRACTS
+from .service import TaskStore, cuda_available, model_health, registry
+from .vllm_runtime import gpu_assets_available, gpu_config
+
+MAX_IMAGE_BYTES = 10 * 1024**2
+MAX_IMAGE_PIXELS = 16_777_216
+ACCEPTED_IMAGE_FORMATS = {"PNG", "JPEG", "WEBP"}
 
 
 class BatchRequest(BaseModel):
+    """Batch creation payload; unknown fields are rejected rather than ignored."""
+
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=120)
     category: str = "bottle"
@@ -26,13 +42,15 @@ class BatchRequest(BaseModel):
 
     @field_validator("name")
     @classmethod
-    def clean_name(cls, value):
+    def clean_name(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("批次名称不能为空")
         return value.strip()
 
 
 class ReviewRequest(BaseModel):
+    """Human review payload; the note must carry a real explanation."""
+
     model_config = ConfigDict(extra="forbid")
     decision: str = Field(
         pattern=r"^(normal_candidate|anomaly_candidate|manual_review)$"
@@ -41,7 +59,7 @@ class ReviewRequest(BaseModel):
 
     @field_validator("note")
     @classmethod
-    def meaningful_note(cls, value):
+    def meaningful_note(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("复核说明不能为空")
         return value.strip()
@@ -50,10 +68,10 @@ class ReviewRequest(BaseModel):
 class UploadBodyLimit:
     """Cap multipart bodies before parser spooling; all temp files remain in the project."""
 
-    def __init__(self, app):
+    def __init__(self, app: Callable) -> None:
         self.app = app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
         if (
             scope["type"] != "http"
             or scope["method"] != "POST"
@@ -63,8 +81,8 @@ class UploadBodyLimit:
             )
         ):
             return await self.app(scope, receive, send)
-        limit = 10 * 1024**2 + 64 * 1024
-        chunks = []
+        limit = MAX_IMAGE_BYTES + 64 * 1024
+        chunks: list[bytes] = []
         total = 0
         headers = dict(scope.get("headers", []))
         try:
@@ -91,7 +109,7 @@ class UploadBodyLimit:
         del chunks
         delivered = False
 
-        async def replay():
+        async def replay() -> dict:
             nonlocal delivered
             if not delivered:
                 delivered = True
@@ -101,11 +119,12 @@ class UploadBodyLimit:
         return await self.app(scope, replay, send)
 
 
-def create_app(state_directory: Path | None = None):
+def create_app(state_directory: Path | None = None) -> FastAPI:
+    """Build the FastAPI application, optionally pinned to a test state directory."""
     configure_environment()
 
     @asynccontextmanager
-    async def lifespan(application):
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.store = TaskStore(state_directory)
         try:
             yield
@@ -117,12 +136,14 @@ def create_app(state_directory: Path | None = None):
     )
     application.add_middleware(UploadBodyLimit)
 
-    def store(request):
+    def store(request: Request) -> TaskStore:
+        """Return the lazily created store, so importing the app costs nothing."""
         if not hasattr(request.app.state, "store"):
             request.app.state.store = TaskStore(state_directory)
         return request.app.state.store
 
-    def get_task(request, task_id):
+    def get_task(request: Request, task_id: str) -> dict:
+        """Load one task, mapping storage errors onto HTTP semantics."""
         try:
             return store(request).get(task_id)
         except KeyError:
@@ -132,13 +153,14 @@ def create_app(state_directory: Path | None = None):
                 409, detail="任务记录损坏或无法读取，请检查日志或重新提交"
             )
 
-    def get_batch(request, batch_id):
+    def get_batch(request: Request, batch_id: str) -> dict:
         try:
             return store(request).get_batch(batch_id)
         except KeyError:
             raise HTTPException(404, detail="批次不存在")
 
-    def validate_selection(category, model, mode):
+    def validate_selection(category: str, model: str, mode: str) -> None:
+        """Reject unknown workflows, unregistered models and missing assets."""
         if mode not in {"baseline", "agent_review"}:
             raise HTTPException(422, detail="只支持 GPU 单模型检测与 Agent 多步复核")
         if (
@@ -160,17 +182,18 @@ def create_app(state_directory: Path | None = None):
                 detail="Agent GPU 服务未配置或模型资产缺失，请准备 PAI 服务或选择单模型检测",
             )
 
-    async def image_body(file):
+    async def image_body(file: UploadFile) -> tuple[bytes, str]:
+        """Read an upload under an explicit cap and reject unusable images early."""
         content = bytearray()
         while block := await file.read(256 * 1024):
             content.extend(block)
-            if len(content) > 10 * 1024**2:
+            if len(content) > MAX_IMAGE_BYTES:
                 raise HTTPException(413, detail="图像超过 10 MiB 上限")
         try:
             with Image.open(BytesIO(content)) as image:
-                if image.format not in {"PNG", "JPEG", "WEBP"}:
+                if image.format not in ACCEPTED_IMAGE_FORMATS:
                     raise ValueError("只支持 PNG、JPEG、WebP")
-                if image.width * image.height > 16777216:
+                if image.width * image.height > MAX_IMAGE_PIXELS:
                     raise ValueError("图像超过 1600 万像素上限")
                 image.verify()
         except UnidentifiedImageError:
@@ -186,7 +209,8 @@ def create_app(state_directory: Path | None = None):
         ][:160]
 
     @application.get("/health")
-    def health():
+    def health() -> dict:
+        """Report capability and asset presence; never starts a model."""
         models = model_health()
         gpu = gpu_config()
         available = cuda_available()
@@ -209,22 +233,25 @@ def create_app(state_directory: Path | None = None):
         )
 
     @application.get("/ready")
-    def ready():
+    def ready() -> Response:
+        """Return 200 only when inference is actually usable, 503 otherwise."""
         value = health()
         return JSONResponse(
             value, status_code=200 if value["inference_service"] else 503
         )
 
     @application.get("/api/models")
-    def models():
+    def models() -> list[dict]:
         return model_health()
 
     @application.get("/api/runtime")
-    def runtime(request: Request):
+    def runtime(request: Request) -> dict:
+        """Expose supervision state for the inference worker and the vLLM owner."""
         return dict(store(request).runtime.status(), gpu=store(request).gpu.status())
 
     @application.get("/api/tools/schemas")
-    def schemas():
+    def schemas() -> dict:
+        """Publish the tool contracts the review loop is allowed to call."""
         result = {
             name: dict(
                 input=a.model_json_schema(),
@@ -247,8 +274,8 @@ def create_app(state_directory: Path | None = None):
         category: str = Form("bottle"),
         model: str = Form("patchcore"),
         mode: str = Form("agent_review"),
-    ):
-        # Stream with an explicit cap; reject before model inference and do not use client paths.
+    ) -> dict:
+        """Validate an upload and enqueue one inspection; no client paths are trusted."""
         content, filename = await image_body(file)
         validate_selection(category, model, mode)
         if not cuda_available():
@@ -266,15 +293,16 @@ def create_app(state_directory: Path | None = None):
         q: str = "",
         limit: int = Query(50, ge=1, le=100),
         offset: int = Query(0, ge=0),
-    ):
+    ) -> dict:
         return store(request).list(status, state, q[:160], limit, offset)
 
     @application.get("/api/tasks/{task_id}")
-    def task(request: Request, task_id: str):
+    def task(request: Request, task_id: str) -> dict:
         return get_task(request, task_id)
 
     @application.get("/api/tasks/{task_id}/report")
-    def report(request: Request, task_id: str):
+    def report(request: Request, task_id: str) -> Response:
+        """Download the full report; unfinished or missing reports never stream."""
         value = get_task(request, task_id)
         if value["status"] not in {"completed", "failed"}:
             raise HTTPException(409, detail="报告尚未生成")
@@ -289,7 +317,8 @@ def create_app(state_directory: Path | None = None):
         )
 
     @application.post("/api/tasks/{task_id}/review")
-    def review(request: Request, task_id: str, value: ReviewRequest):
+    def review(request: Request, task_id: str, value: ReviewRequest) -> dict:
+        """Append a human record; the original model report is never rewritten."""
         get_task(request, task_id)
         try:
             return store(request).review(task_id, value.decision, value.note.strip())
@@ -297,7 +326,8 @@ def create_app(state_directory: Path | None = None):
             raise HTTPException(409, detail=str(error))
 
     @application.post("/api/tasks/{task_id}/retry", status_code=202)
-    def retry(request: Request, task_id: str):
+    def retry(request: Request, task_id: str) -> dict:
+        """Create a linked attempt instead of mutating the failed one."""
         get_task(request, task_id)
         try:
             return store(request).retry(task_id)
@@ -307,7 +337,7 @@ def create_app(state_directory: Path | None = None):
             raise HTTPException(429, detail=str(error))
 
     @application.post("/api/batches", status_code=201)
-    def create_batch(request: Request, value: BatchRequest):
+    def create_batch(request: Request, value: BatchRequest) -> dict:
         validate_selection(value.category, value.model, value.mode)
         if not cuda_available():
             raise HTTPException(503, detail="CUDA 不可用；本版本不支持 CPU 推理")
@@ -320,17 +350,18 @@ def create_app(state_directory: Path | None = None):
         request: Request,
         limit: int = Query(50, ge=1, le=100),
         offset: int = Query(0, ge=0),
-    ):
+    ) -> dict:
         return store(request).list_batches(limit, offset)
 
     @application.get("/api/batches/{batch_id}")
-    def batch(request: Request, batch_id: str):
+    def batch(request: Request, batch_id: str) -> dict:
         return get_batch(request, batch_id)
 
     @application.post("/api/batches/{batch_id}/items", status_code=201)
     async def upload_batch_item(
         request: Request, batch_id: str, file: UploadFile = File(...)
-    ):
+    ) -> dict:
+        """Stage one image into a draft batch and record per-file failures."""
         batch = get_batch(request, batch_id)
         try:
             content, filename = await image_body(file)
@@ -355,7 +386,8 @@ def create_app(state_directory: Path | None = None):
             raise HTTPException(429, detail=str(error))
 
     @application.post("/api/batches/{batch_id}/actions/{action}")
-    def batch_action(request: Request, batch_id: str, action: str):
+    def batch_action(request: Request, batch_id: str, action: str) -> dict:
+        """Start, resume, pause or cancel a batch through its state machine."""
         get_batch(request, batch_id)
         try:
             return store(request).batch_action(batch_id, action)
@@ -367,7 +399,8 @@ def create_app(state_directory: Path | None = None):
         request: Request,
         batch_id: str,
         format: str = Query("json", pattern="^(json|csv)$"),
-    ):
+    ) -> Response:
+        """Export a batch as JSON or as an Excel-safe UTF-8 CSV."""
         batch = get_batch(request, batch_id)
         items = []
         for item in batch["items"]:
@@ -434,7 +467,8 @@ def create_app(state_directory: Path | None = None):
         )
 
     @application.get("/api/tasks/{task_id}/artifacts/{filename}")
-    def artifact(request: Request, task_id: str, filename: str):
+    def artifact(request: Request, task_id: str, filename: str) -> Response:
+        """Serve one whitelisted evidence file; paths are never taken from input."""
         get_task(request, task_id)
         if not re.fullmatch(
             r"(original|inspection_heatmap|inspection_overlay|reference_[12]|region_[1-4]|review_R[1-4]_ref_[12]|vlm_round_[1-3]_image_[1-3])\.png|inspection\.npy",
@@ -460,7 +494,8 @@ def create_app(state_directory: Path | None = None):
         )
 
     @application.get("/api/runs")
-    def runs():
+    def runs() -> list[dict]:
+        """List offline experiment runs that produced a status record."""
         result = []
         for directory in sorted((ROOT / "outputs").iterdir(), reverse=True):
             if not (directory / "status.json").is_file():
@@ -478,7 +513,7 @@ def create_app(state_directory: Path | None = None):
         return result
 
     @application.get("/api/runs/{run_id}/metrics")
-    def metrics(run_id: str):
+    def metrics(run_id: str) -> dict:
         if not re.fullmatch(r"\d{8}-\d{6}-[a-z-]+-[a-f0-9]{6}", run_id):
             raise HTTPException(400, detail="Invalid run ID")
         path = ROOT / "outputs" / run_id / "metrics.json"

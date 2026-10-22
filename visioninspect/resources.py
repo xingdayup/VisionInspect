@@ -1,10 +1,18 @@
 """Sample and reclaim the complete inference process tree."""
 
+from __future__ import annotations
+
 import psutil
 
 
-def resident_tree_memory(process: psutil.Process, tracked=None) -> int:
-    """Current tree RSS, excluding lifetime peaks from earlier resident jobs."""
+def resident_tree_memory(
+    process: psutil.Process, tracked: dict[int, psutil.Process] | None = None
+) -> int:
+    """Return current tree RSS, excluding lifetime peaks from earlier jobs.
+
+    Every visited child is recorded in tracked so a supervisor can still find
+    descendants that reparent themselves after their own parent exits.
+    """
     try:
         members = [process] + process.children(recursive=True)
     except psutil.NoSuchProcess:
@@ -21,6 +29,7 @@ def resident_tree_memory(process: psutil.Process, tracked=None) -> int:
 
 
 def tree_memory(process: psutil.Process, peaks: dict[int, int]) -> int:
+    """Accumulate per-PID peaks across calls and return their sum."""
     try:
         members = [process] + process.children(recursive=True)
     except psutil.NoSuchProcess:
@@ -36,7 +45,8 @@ def tree_memory(process: psutil.Process, peaks: dict[int, int]) -> int:
     return sum(peaks.values())
 
 
-def kill_tree(process: psutil.Process):
+def kill_tree(process: psutil.Process) -> None:
+    """Kill children first, then the parent, and wait for the whole tree."""
     try:
         members = process.children(recursive=True) + [process]
     except psutil.NoSuchProcess:

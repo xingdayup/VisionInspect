@@ -1,15 +1,29 @@
-"""Local visual tools. Assets are validated; tools never download or execute arbitrary names."""
+"""Local visual tools. Assets are validated; tools never download or execute arbitrary names.
+
+Every public method here is callable through invoke(), which validates the
+request and the response against a versioned contract in schemas.py.
+"""
 
 from __future__ import annotations
-from pathlib import Path
+
 import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 import numpy as np
 from PIL import Image, ImageOps
-from .common import project_path, read_json, sha256, identity, load_config
+
+from .common import identity, load_config, project_path, read_json, sha256
 from .schemas import TOOL_CONTRACTS
 
+if TYPE_CHECKING:
+    from .model import Detector
+    from .model_cache import ModelCache
+    from .schemas import FinalizeInput, ImageInput, RegionInput
 
-def quality_metrics(image: Image.Image) -> dict:
+
+def quality_metrics(image: Image.Image) -> dict[str, float | int]:
+    """Measure the cheap image properties used to reject unusable inputs."""
     import cv2
 
     gray = np.asarray(image.convert("L"), dtype=np.uint8)
@@ -23,7 +37,9 @@ def quality_metrics(image: Image.Image) -> dict:
 
 
 class ToolFailure(Exception):
-    def __init__(self, code, message, retryable=False):
+    """A typed tool error; retryable distinguishes transient from permanent."""
+
+    def __init__(self, code: str, message: str, retryable: bool = False) -> None:
         self.code = code
         self.message = message
         self.retryable = retryable
@@ -31,7 +47,20 @@ class ToolFailure(Exception):
 
 
 class ToolKit:
-    def __init__(self, registration: dict, policy: dict, output: Path, cache=None):
+    """The complete local tool surface for one inspection task.
+
+    The toolkit owns no scheduling and no policy decisions: it validates assets,
+    runs the detector, and reports evidence. Deciding what the evidence means
+    happens in agent.py and review_agent.py.
+    """
+
+    def __init__(
+        self,
+        registration: dict,
+        policy: dict,
+        output: Path,
+        cache: ModelCache | None = None,
+    ) -> None:
         self.registration = registration
         self.policy = policy
         self.output = output
@@ -44,15 +73,20 @@ class ToolKit:
             != self.profile["digest"]
         ):
             raise ToolFailure("model_missing", "校准策略校验失败")
-        self._detector = None
-        self._references = None
-        self.initialization_timings = {}
+        self._detector: Detector | None = None
+        self._references: tuple[np.ndarray, list[str], list[str]] | None = None
+        self.initialization_timings: dict[str, object] = {}
         self.cache = cache
         if cache is not None:
             cache.bind_detector(registration, self.profile)
         self.threshold = self.profile["image_threshold"]
 
-    def detector(self):
+    def detector(self) -> Detector:
+        """Validate and load the detector once per process, then reuse it.
+
+        The checkpoint is hash-checked against the calibration profile before
+        loading, and the memory bank must land on CUDA; no CPU fallback exists.
+        """
         if self._detector is None:
             if self.cache is not None and self.cache.detector is not None:
                 self._detector = self.cache.detector
@@ -93,12 +127,13 @@ class ToolKit:
                 self.cache.detector = detector
         return self._detector
 
-    def prepare_detector(self):
+    def prepare_detector(self) -> dict[str, object]:
         """Cold imports/checkpoint loading are a separately budgeted initialization stage."""
         self.detector()
         return dict(self.initialization_timings)
 
-    def image(self, path: str):
+    def image(self, path: str | Path) -> Image.Image:
+        """Open an image under the pixel cap and normalize orientation to RGB."""
         try:
             with Image.open(path) as image:
                 if (
@@ -111,7 +146,8 @@ class ToolKit:
         except (OSError, ValueError, Image.DecompressionBombError) as error:
             raise ToolFailure("invalid_image", "图像不存在、损坏或无法解码") from error
 
-    def invoke(self, name, arguments):
+    def invoke(self, name: str, arguments: dict) -> dict:
+        """Validate, dispatch and re-validate one tool call by contract name."""
         if name not in TOOL_CONTRACTS:
             raise ToolFailure("schema_error", "未知工具")
         input_type, output_type = TOOL_CONTRACTS[name]
@@ -125,7 +161,8 @@ class ToolKit:
             mode="json"
         )
 
-    def inspect_image_quality(self, request):
+    def inspect_image_quality(self, request: ImageInput) -> dict:
+        """Reject images the model cannot interpret, before any GPU work."""
         image = self.image(request.image_path)
         metrics = quality_metrics(image)
         limits = self.policy["quality"]
@@ -144,8 +181,10 @@ class ToolKit:
             issues.append("曝光超出正常验证样本范围")
         return dict(valid=not issues, issues=issues, **metrics)
 
-    def detect_anomaly(self, request):
+    def detect_anomaly(self, request: ImageInput) -> dict:
+        """Run PatchCore on CUDA and persist the score, map and renders."""
         import torch
+
         from .artifacts import save_evidence
 
         array = np.asarray(self.image(request.image_path))
@@ -172,7 +211,8 @@ class ToolKit:
             ),
         )
 
-    def embedding(self, array):
+    def embedding(self, array: np.ndarray) -> np.ndarray:
+        """Return an L2-normalized mean feature vector for reference matching."""
         import torch
 
         detector = self.detector()
@@ -188,7 +228,12 @@ class ToolKit:
         result = vector[0].detach().cpu().numpy().astype(np.float32)
         return result / max(float(np.linalg.norm(result)), 1e-12)
 
-    def retrieve_normal_reference(self, request):
+    def retrieve_normal_reference(self, request: ImageInput) -> dict:
+        """Pick the two closest normal training images and copy them as evidence.
+
+        Each candidate must resolve inside the dataset root, come from the
+        train/good split, and match its recorded hash; anything else is an error.
+        """
         index_path = project_path(self.registration["references"])
         if (
             not index_path.is_file()
@@ -234,7 +279,12 @@ class ToolKit:
             similarity_floor=self.profile["reference_similarity_floor"],
         )
 
-    def analyze_suspicious_region(self, request):
+    def analyze_suspicious_region(self, request: RegionInput) -> dict:
+        """Extract connected high-score regions as crops for the review loop.
+
+        Crops are capped by policy, and truncated reports the true region count
+        so a caller cannot mistake the cap for the full extent of the anomaly.
+        """
         import cv2
 
         path = (self.output / request.anomaly_map_path).resolve()
@@ -301,7 +351,13 @@ class ToolKit:
             truncated=total_regions > len(regions),
         )
 
-    def finalize_inspection(self, request):
+    def finalize_inspection(self, request: FinalizeInput) -> dict:
+        """Turn detection plus completeness flags into a candidate state.
+
+        Any missing, ambiguous, conflicting or failed evidence becomes
+        manual_review; the model score and the frozen threshold are never
+        adjusted here.
+        """
         reasons = list(request.errors)
         if not request.quality_ok:
             reasons.append("输入质量未通过，无法可靠判定")
