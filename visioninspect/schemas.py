@@ -116,3 +116,8 @@ TOOL_CONTRACTS = {
     "analyze_suspicious_region": (RegionInput, RegionResult),
     "finalize_inspection": (FinalizeInput, FinalResult),
 }
+
+# Upper bound for the review loop's model budget. A normal verdict needs one
+# call per extracted region plus a global look and a finish, so the ceiling has
+# to stay above the region cap for the loop to be able to conclude at all.
+MAX_REVIEW_MODEL_CALLS = 5

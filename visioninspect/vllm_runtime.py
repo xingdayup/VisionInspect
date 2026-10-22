@@ -24,6 +24,7 @@ import yaml
 
 from .common import ROOT, project_path, read_json, write_json
 from .resources import kill_tree, resident_tree_memory
+from .schemas import MAX_REVIEW_MODEL_CALLS
 
 
 def gpu_config() -> dict:
@@ -60,12 +61,9 @@ def gpu_config() -> dict:
             or value[key] <= 0
         ):
             raise ValueError(f"Invalid GPU limit: {key}")
-    if type(value["max_model_calls"]) is not int or value["max_model_calls"] not in (
-        1,
-        2,
-        3,
-    ):
-        raise ValueError("GPU model call budget must be 1–3")
+    budget = value["max_model_calls"]
+    if type(budget) is not int or not 1 <= budget <= MAX_REVIEW_MODEL_CALLS:
+        raise ValueError(f"GPU model call budget must be 1–{MAX_REVIEW_MODEL_CALLS}")
     return value
 
 

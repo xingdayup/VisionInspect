@@ -8,6 +8,7 @@ model: visioninspect-vlm
 idle_ttl_seconds: 600
 startup_timeout_seconds: 300
 request_timeout_seconds: 45
-max_model_calls: 3
+# 1 次整体 + 每个疑似区域 1 次局部 + 1 次结束；区域上限为 4，故上限取 5
+max_model_calls: 5
 server_memory_limit_gib: 24
 project_memory_limit_gib: 28

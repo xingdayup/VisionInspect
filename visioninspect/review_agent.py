@@ -21,7 +21,7 @@ from PIL import Image
 from .agent import InspectionAgent
 from .common import write_json
 from .review_contracts import REVIEW_RULE_VERSION, ReviewDecision
-from .schemas import FinalResult
+from .schemas import MAX_REVIEW_MODEL_CALLS, FinalResult
 from .tools import ToolFailure
 
 if TYPE_CHECKING:
@@ -49,11 +49,11 @@ class ReviewAgent:
         policy: dict,
         client: VLLMClient,
         progress: Callable[[dict], None] | None = None,
-        max_model_calls: int = 3,
+        max_model_calls: int = MAX_REVIEW_MODEL_CALLS,
     ) -> None:
         self.tools, self.policy, self.client = tools, policy, client
         self.progress = progress or (lambda value: None)
-        self.maximum = min(3, max_model_calls)
+        self.maximum = max(1, min(MAX_REVIEW_MODEL_CALLS, max_model_calls))
         self.calls = 0
         self.rounds: list[dict] = []
         self.reviewed: dict[str, str] = {}
