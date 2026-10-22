@@ -6,7 +6,7 @@ from PIL import Image
 
 from visioninspect.common import ROOT, read_json
 from visioninspect.review_agent import ReviewAgent, truncation_blocks_normal
-from visioninspect.review_contracts import ReviewDecision
+from visioninspect.review_contracts import REVIEW_PROMPT, ReviewDecision
 from visioninspect.schemas import FinalizeInput
 from visioninspect.tools import ToolFailure, ToolKit
 
@@ -351,3 +351,12 @@ def test_abstention_nudge_is_sent_exactly_once(tmp_path):
     # call 1 selects the region, call 2 abstains, call 3 carries the follow-up.
     assert client.inputs[1][0]["abstention_nudge"] is None
     assert "unknown" in client.inputs[2][0]["abstention_nudge"]
+
+
+def test_prompt_keeps_the_judgeable_parts():
+    """Guard the wording that measurably changed behaviour; do not let it rot."""
+    assert "判据" in REVIEW_PROMPT
+    assert "反光" in REVIEW_PROMPT and "不算缺陷" in REVIEW_PROMPT
+    assert "remaining_regions" in REVIEW_PROMPT
+    assert "最后手段" in REVIEW_PROMPT
+    assert "重复请求" in REVIEW_PROMPT
