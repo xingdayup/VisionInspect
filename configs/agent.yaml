@@ -1,15 +1,10 @@
 schema_version: 1
-rule_version: cpu-review-v1
+rule_version: gpu-detection-v1
 max_tool_calls: 8
 max_retries: 1
 timeout_seconds: 180
 model_initialization_timeout_seconds: 90
 tool_timeout_seconds: 45
-max_vlm_calls: 1
-vlm:
-  enabled: false
-  directory: weights/smolvlm-500m
-  max_new_tokens: 48
 quality:
   minimum_side: 128
   maximum_pixels: 16777216

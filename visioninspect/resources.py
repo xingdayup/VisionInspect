@@ -1,4 +1,4 @@
-"""Windows venv launchers may spawn the real interpreter: monitor the full tree."""
+"""Sample and reclaim the complete inference process tree."""
 import psutil
 
 

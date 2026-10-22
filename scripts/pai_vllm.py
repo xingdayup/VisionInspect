@@ -134,7 +134,7 @@ def server_command(root):
     return [sys.executable,'-B','-m','vllm.entrypoints.openai.api_server','--model',str(model_dir(root)),
         '--served-model-name','visioninspect-vlm','--host','127.0.0.1','--port','8001',
         '--dtype','bfloat16','--seed','42','--max-model-len','4096','--max-num-seqs','1',
-        '--max-num-batched-tokens','2048','--gpu-memory-utilization','0.88','--enforce-eager',
+        '--max-num-batched-tokens','2048','--gpu-memory-utilization','0.85','--enforce-eager',
         '--limit-mm-per-prompt',json.dumps({'image':3,'video':0}),
         '--mm-processor-kwargs',json.dumps({'size':{'shortest_edge':65536,'longest_edge':262144}}),
         '--mm-processor-cache-gb','0.25','--no-trust-remote-code']

@@ -11,8 +11,8 @@ from visioninspect.agent import InspectionAgent
 def policy():return yaml.safe_load((ROOT/'configs/agent.yaml').read_text(encoding='utf8'))
 
 def toolkit(tmp_path):
-    models=yaml.safe_load((ROOT/'configs/models.yaml').read_text(encoding='utf8'))
-    return ToolKit(models['models']['bottle']['patchcore'],policy(),tmp_path)
+    from visioninspect.service import registry
+    return ToolKit(registry()['bottle']['patchcore'],policy(),tmp_path)
 
 def test_quality_and_invalid_tool_fail_closed(tmp_path):
     tools=toolkit(tmp_path);path=tmp_path/'flat.png';Image.new('RGB',(256,256),'gray').save(path)
@@ -27,7 +27,6 @@ def test_regions_and_optional_candidate_are_honest(tmp_path):
     result=tools.invoke('analyze_suspicious_region',dict(image_path=str(path),anomaly_map_path='map.npy'))
     assert len(result['regions'])==1 and result['regions'][0]['pixels']==200
     assert (tmp_path/result['crop_paths'][0]).is_file()
-    assert not tools.invoke('classify_defect_candidate',dict(image_path=str(path)))['available']
     with pytest.raises(ToolFailure):tools.invoke('analyze_suspicious_region',dict(image_path=str(path),anomaly_map_path='../map.npy'))
 
 class FakeTools:
@@ -82,40 +81,22 @@ def test_tool_timeout_invalidates_otherwise_successful_output():
     assert result['result']['state']=='manual_review'
     assert result['trace'][0]['error']['code']=='timeout'
 
-def test_missing_vlm_cannot_trigger_download(tmp_path):
-    from visioninspect.vlm import LocalVLM
-    from visioninspect.common import offline
-    with offline(),pytest.raises(ToolFailure) as failure:LocalVLM(tmp_path).load()
-    assert failure.value.code=='vlm_unavailable'
 
-def test_weight_provenance_paths_are_portable(tmp_path):
-    from visioninspect.vlm import local_asset_path
-    assert local_asset_path(tmp_path,r'weights\smolvlm-500m\model.safetensors')==tmp_path/'model.safetensors'
-    assert local_asset_path(tmp_path,'weights/smolvlm-500m/model.safetensors')==tmp_path/'model.safetensors'
 
 def test_category_mismatch_fails_before_image_or_model_loading(tmp_path):
     tools=toolkit(tmp_path)
     with pytest.raises(ToolFailure,match='类别'):
         tools.invoke('detect_anomaly',dict(image_path='does-not-exist.png',category='pill'))
 
-@pytest.mark.parametrize('category,product',[('metal_nut','metal nut'),('capsule','capsule'),('pill','pill')])
-def test_vlm_prompts_use_registered_product_without_test_labels(category,product):
-    from visioninspect.vlm import candidate_prompt
-    for reference in (False,True):
-        prompt=candidate_prompt(category,reference)
-        assert product in prompt and 'bottle' not in prompt
-        assert 'unknown' in prompt and 'Do not infer causes' in prompt
-    with pytest.raises(ToolFailure):candidate_prompt('unsupported',True)
 
 @pytest.mark.parametrize('case,score,bad,fail,mode,region_available,reference_ok,expected_state,expected_tools',[
-    ('confident_normal',2,False,None,'dynamic',True,True,'normal_candidate',['quality','detect','final']),
-    ('confident_anomaly',20,False,None,'dynamic',True,True,'anomaly_candidate',['quality','detect','regions','final']),
-    ('boundary',10,False,None,'dynamic',True,True,'manual_review',['quality','detect','regions','references','final']),
-    ('poor_quality',2,True,None,'dynamic',True,True,'manual_review',['quality','final']),
-    ('detector_failure',2,False,'detect_anomaly','dynamic',True,True,'manual_review',['quality','detect','final']),
-    ('empty_high_score_region',20,False,None,'dynamic',False,True,'manual_review',['quality','detect','regions','final']),
-    ('weak_normal_reference',9.2,False,None,'dynamic',True,False,'manual_review',['quality','detect','regions','references','final']),
-    ('fixed_normal',2,False,None,'fixed',True,True,'normal_candidate',['quality','detect','regions','references','final']),
+    ('confident_normal',2,False,None,'agent_review',True,True,'normal_candidate',['quality','detect','final']),
+    ('confident_anomaly',20,False,None,'agent_review',True,True,'anomaly_candidate',['quality','detect','regions','final']),
+    ('boundary',10,False,None,'agent_review',True,True,'manual_review',['quality','detect','regions','references','final']),
+    ('poor_quality',2,True,None,'agent_review',True,True,'manual_review',['quality','final']),
+    ('detector_failure',2,False,'detect_anomaly','agent_review',True,True,'manual_review',['quality','detect','final']),
+    ('empty_high_score_region',20,False,None,'agent_review',False,True,'manual_review',['quality','detect','regions','final']),
+    ('weak_normal_reference',9.2,False,None,'agent_review',True,False,'manual_review',['quality','detect','regions','references','final']),
 ])
 def test_predefined_routing_oracle(case,score,bad,fail,mode,region_available,reference_ok,expected_state,expected_tools,record_property):
     class CaseTools(FakeTools):

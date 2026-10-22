@@ -12,21 +12,14 @@ def main(directory,cache=None,worker_runtime=None):
     request=read_json(directory/'request.json')
     snapshot=request.get('snapshot') or {}
     policy=snapshot.get('policy') or yaml.safe_load((ROOT/'configs/agent.yaml').read_text(encoding='utf8'))
-    policy['vlm']['enabled']=request['vlm']
+    if request['mode'] not in {'baseline','agent_review'}:
+        raise ValueError('Only GPU baseline and agent_review workflows are supported')
     registration=snapshot.get('registration') or registry()[request['category']][request['model']]
     agent_review=request['mode']=='agent_review'
     configure_environment()
     os.environ['LANGSMITH_TRACING']='false';os.environ['LANGCHAIN_TRACING_V2']='false'
     with offline(allow_loopback_ports=(8001,) if agent_review else ()):
-        vlm=None;vlm_loaded_before_task=False
-        if request['vlm'] and not agent_review:
-            if cache is not None:
-                vlm=cache.get_vlm(project_path(policy['vlm']['directory']),policy['vlm']['max_new_tokens'])
-            else:
-                from .vlm import LocalVLM
-                vlm=LocalVLM(project_path(policy['vlm']['directory']),policy['vlm']['max_new_tokens'])
-            vlm_loaded_before_task=vlm.model is not None
-        tools=ToolKit(registration,policy,directory,vlm,cache=cache)
+        tools=ToolKit(registration,policy,directory,cache=cache)
         if snapshot.get('profile_digest') and tools.profile['digest']!=snapshot['profile_digest']:
             raise ValueError('模型策略与提交任务时的快照不一致')
         progress=lambda value:write_json(directory/'progress.json',value)
@@ -46,12 +39,11 @@ def main(directory,cache=None,worker_runtime=None):
         else:
             report=InspectionAgent(tools,policy,progress).run(request['image_path'],request['category'],request['mode'])
         report.update(task_id=request['id'],filename=request['filename'],created_at=request['created_at'],
-                      runtime=dict(python=platform.python_version(),platform=platform.platform(),device='CPU',precision='FP32'),
+                      runtime=dict(python=platform.python_version(),platform=platform.platform(),device='cuda:0',precision='FP32'),
                       policy=policy,policy_digest=identity(policy),checkpoint_sha256=tools.profile['checkpoint_sha256'],
                       manifest_digest=tools.profile['manifest_digest'])
         if worker_runtime is not None:
-            report['runtime'].update(worker_runtime,model_cache=cache.status(),
-                                     vlm_loaded_before_task=vlm_loaded_before_task)
+            report['runtime'].update(worker_runtime,model_cache=cache.status())
         write_json(directory/'report.json',report)
         return report
 

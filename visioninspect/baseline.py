@@ -1,4 +1,4 @@
-"""CPU baseline CLI. Asset download is a separate, explicitly invoked script."""
+"""CUDA PatchCore experiments. Asset preparation is always explicit."""
 from __future__ import annotations
 
 import argparse
@@ -66,7 +66,6 @@ def predictions(detector, root, records, output, warmup_record=None, warmup=0):
 def worker(args, config, output):
     from .data import check_data, load_manifest
     from .model import Detector, setup
-    setup(config)
     started = time.perf_counter()
     if args.command == 'check-data':
         manifest = check_data(config)
@@ -74,6 +73,7 @@ def worker(args, config, output):
         write_json(output/'data-check.json', dict(counts=counts, manifest_digest=manifest['digest']))
         print(json.dumps(counts), flush=True)
         return
+    setup(config)
     if args.command in {'smoke','fit'}:
         manifest, train = load_manifest(config, ('train',))
         smoke = args.command == 'smoke'
@@ -158,7 +158,8 @@ def worker(args, config, output):
         metrics.update(threshold=calibration['threshold'], checkpoint_sha256=fit_result['checkpoint_sha256'],
                        calibration_sha256=calibration_hash, manifest_digest=manifest['digest'],
                        test_images=len(records), seconds=time.perf_counter()-started,
-                       gpu_memory='not applicable: CPU run', configuration='PatchCore-ResNet18 CPU, not paper default')
+                       gpu_peak_allocated_bytes=__import__('torch').cuda.max_memory_allocated(),
+                       configuration='PatchCore-ResNet18 CUDA FP32, not paper default')
         if sha256(calibration_path) != calibration_hash:
             raise ValueError('Calibration mutated during test')
         write_json(output/'metrics.json',metrics)
@@ -188,7 +189,7 @@ def main():
     configure_environment()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('command', choices=['check-data','smoke','fit','calibrate','evaluate','predict'])
-    parser.add_argument('--config', type=Path, default=ROOT/'configs/patchcore_cpu.yaml')
+    parser.add_argument('--config', type=Path, default=ROOT/'configs/patchcore.yaml')
     parser.add_argument('--run', help='Completed formal fit directory')
     parser.add_argument('--image', help='Single image for predict')
     parser.add_argument('--worker-output', type=Path, help=argparse.SUPPRESS)
@@ -240,7 +241,7 @@ def main():
     status=dict(command=args.command,exit_code=process.returncode,seconds=time.perf_counter()-started,
                 peak_process_tree_bytes=peak,process_peak_bytes=process_peaks,
                 memory_method='sum of OS peak working set for observed process tree; conservative upper bound',
-                stop_reason=reason,gpu_memory='not applicable: CPU run')
+                stop_reason=reason,gpu_memory='CUDA allocator statistics are recorded by the worker; process VRAM is separate')
     write_json(output/'status.json',status)
     print(json.dumps(status),flush=True)
     if process.returncode:

@@ -129,14 +129,3 @@ def test_detector_cache_reuses_slot_and_invalidates_changed_assets(tmp_path):
     assert cache.detector is None and cache.references is None
     cache.detector=detector;cache.bind_detector(registration,{'digest':'different profile'})
     assert cache.detector is None
-
-
-def test_vlm_cache_is_lazy_and_invalidated_by_file_changes(tmp_path):
-    write_json(tmp_path/'source.json',dict(files=[dict(path='weight.safetensors')]))
-    weight=tmp_path/'weight.safetensors';weight.write_bytes(b'FIXTURE')
-    cache=ModelCache();vlm=cache.get_vlm(tmp_path,48)
-    assert not cache.status()['vlm_loaded']
-    vlm.model=object()
-    assert cache.get_vlm(tmp_path,48) is vlm and cache.status()['vlm_loaded']
-    weight.write_bytes(b'CHANGED FIXTURE')
-    assert cache.get_vlm(tmp_path,48) is not vlm and not cache.status()['vlm_loaded']

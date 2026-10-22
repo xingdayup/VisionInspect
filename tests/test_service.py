@@ -7,6 +7,8 @@ from visioninspect.api import create_app
 from visioninspect.service import TaskStore,timestamp
 from visioninspect.common import read_json,write_json
 
+pytestmark=pytest.mark.usefixtures('gpu_service_fixture')
+
 def wait_task(store,task_id):
     deadline=time.monotonic()+30
     while time.monotonic()<deadline:
@@ -20,16 +22,16 @@ def png():
 
 def test_upload_validation_and_unregistered_model(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
-        assert client.post('/api/tasks',files={'file':('bad.png',b'not an image','image/png')}).status_code==422
-        assert client.post('/api/tasks',files={'file':('huge.png',b'x'*(10*1024**2+1),'image/png')}).status_code==413
-        assert client.post('/api/tasks',files={'file':('oversized.png',b'x'*(11*1024**2),'image/png')}).status_code==413
-        assert client.post('/api/tasks',files={'file':('a.png',png(),'image/png')},data={'category':'unknown'}).status_code==422
+        assert client.post('/api/tasks',files={'file':('bad.png',b'not an image','image/png')},data={'mode':'baseline'}).status_code==422
+        assert client.post('/api/tasks',files={'file':('huge.png',b'x'*(10*1024**2+1),'image/png')},data={'mode':'baseline'}).status_code==413
+        assert client.post('/api/tasks',files={'file':('oversized.png',b'x'*(11*1024**2),'image/png')},data={'mode':'baseline'}).status_code==413
+        assert client.post('/api/tasks',files={'file':('a.png',png(),'image/png')},data={'category':'unknown','mode':'baseline'}).status_code==422
         assert client.get('/api/tasks/not-a-task').status_code==404
         assert client.get('/api/tasks?limit=0').status_code==422
 
 def test_real_quality_failure_is_reviewable_and_persistent(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
-        response=client.post('/api/tasks',files={'file':('../flat.png',png(),'image/png')})
+        response=client.post('/api/tasks',files={'file':('../flat.png',png(),'image/png')},data={'mode':'baseline'})
         assert response.status_code==202;task=response.json();assert task['filename']=='flat.png'
         task_id=task['id'];deadline=time.monotonic()+30
         while time.monotonic()<deadline:
@@ -51,7 +53,7 @@ def test_real_quality_failure_is_reviewable_and_persistent(tmp_path):
 def test_missing_model_is_a_real_service_error(tmp_path,monkeypatch):
     monkeypatch.setattr('visioninspect.api.model_health',lambda:[dict(category='bottle',model='patchcore',available=False,reason='模型资产缺失')])
     with TestClient(create_app(tmp_path)) as client:
-        response=client.post('/api/tasks',files={'file':('image.png',png(),'image/png')})
+        response=client.post('/api/tasks',files={'file':('image.png',png(),'image/png')},data={'mode':'baseline'})
         assert response.status_code==503 and response.json()['detail']=='模型资产缺失'
         assert client.get('/api/tasks').json()['total']==0
         assert client.get('/ready').status_code==503
@@ -70,8 +72,8 @@ def test_failed_output_is_never_accepted_and_next_job_recovers(tmp_path,record_p
             return [sys.executable,'-B','-c',code,str(directory/'report.json'),json.dumps(report),str(exit_code)]
     store=FaultThenRealWorker(tmp_path)
     try:
-        failed=store.create(png(),'fault-fixture.png','bottle','patchcore','dynamic')
-        recovered=store.create(png(),'flat-fixture.png','bottle','patchcore','dynamic')
+        failed=store.create(png(),'fault-fixture.png','bottle','patchcore','baseline')
+        recovered=store.create(png(),'flat-fixture.png','bottle','patchcore','baseline')
         failed=wait_task(store,failed['id']);recovered=wait_task(store,recovered['id'])
         assert failed['status']=='failed' and failed['state']=='manual_review'
         assert failed['report']['result']['state']=='manual_review'
@@ -91,7 +93,7 @@ def test_interrupted_task_report_is_invalidated_on_restart(tmp_path):
     write_json(directory/'progress.json',dict(stage='detect_anomaly',trace=[]))
     with store.connect() as db:
         db.execute('INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                   (task_id,timestamp(),timestamp(),'running','bottle','patchcore','dynamic','interrupted-fixture.png',None,None,None,None))
+                   (task_id,timestamp(),timestamp(),'running','bottle','patchcore','baseline','interrupted-fixture.png',None,None,None,None))
     store.close();restarted=TaskStore(tmp_path)
     try:
         task=restarted.get(task_id)
@@ -102,7 +104,7 @@ def test_interrupted_task_report_is_invalidated_on_restart(tmp_path):
 
 def test_missing_or_corrupt_report_has_readable_http_error(tmp_path):
     with TestClient(create_app(tmp_path)) as client:
-        task=client.post('/api/tasks',files={'file':('flat.png',png(),'image/png')}).json()
+        task=client.post('/api/tasks',files={'file':('flat.png',png(),'image/png')},data={'mode':'baseline'}).json()
         task=wait_task(client.app.state.store,task['id'])
         path=client.app.state.store.directory(task['id'])/'report.json';path.unlink()
         assert client.get(f"/api/tasks/{task['id']}/report").status_code==410

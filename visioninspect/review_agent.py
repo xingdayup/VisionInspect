@@ -34,8 +34,7 @@ class ReviewAgent:
             calls=self.calls,maximum_calls=self.maximum,reviewed_regions=sorted(self.reviewed),rounds=self.rounds)))
 
     def baseline(self, state):
-        local_policy = dict(self.policy,vlm=dict(self.policy['vlm'],enabled=False))
-        self.report = InspectionAgent(self.tools,local_policy,self.progress).run(self.image_path,self.category,'dynamic')
+        self.report = InspectionAgent(self.tools,self.policy,self.progress).run(self.image_path,self.category,'agent_review')
         self.report.update(schema_version=2,mode='agent_review')
         detection = self.report['outputs'].get('detection')
         self.regions = {r['id']:r for r in (self.report['outputs'].get('regions') or {}).get('regions',[])}
@@ -49,7 +48,7 @@ class ReviewAgent:
         self.report['initial_result'] = initial
         self.report['review_eligible'] = eligible
         self.report['agent_review'] = dict(status='skipped',reason='未进入不确定区间或检测未完成',rounds=[],calls=0)
-        # A supervisor can retain this validated CPU stage even if a later request hangs.
+        # Retain detection evidence even when a later VLM request fails.
         write_json(self.tools.output/'baseline-result.json',self.report)
         if not eligible or self.report['errors']:
             return dict(route='finish')

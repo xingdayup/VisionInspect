@@ -10,7 +10,7 @@ from pydantic import BaseModel,ConfigDict,Field,field_validator
 from PIL import Image,UnidentifiedImageError
 from .common import ROOT,project_path,read_json,configure_environment
 from .schemas import TOOL_CONTRACTS
-from .service import TaskStore,model_health,registry
+from .service import TaskStore,model_health,registry,cuda_available
 from .vllm_runtime import gpu_config,gpu_assets_available
 from .review_contracts import ReviewDecision
 
@@ -20,7 +20,6 @@ class BatchRequest(BaseModel):
     category: str='bottle'
     model: str='patchcore'
     mode: str='agent_review'
-    vlm: bool=False
     @field_validator('name')
     @classmethod
     def clean_name(cls,value):
@@ -70,7 +69,7 @@ def create_app(state_directory:Path|None=None):
         application.state.store=TaskStore(state_directory)
         try:yield
         finally:application.state.store.close()
-    application=FastAPI(title='VisionInspect-Agent',version='0.4.0',lifespan=lifespan)
+    application=FastAPI(title='VisionInspect-Agent',version='0.5.0',lifespan=lifespan)
     application.add_middleware(UploadBodyLimit)
     def store(request):
         if not hasattr(request.app.state,'store'):request.app.state.store=TaskStore(state_directory)
@@ -84,16 +83,14 @@ def create_app(state_directory:Path|None=None):
         try:return store(request).get_batch(batch_id)
         except KeyError:raise HTTPException(404,detail='批次不存在')
 
-    def validate_selection(category,model,mode,vlm=False):
-        if mode not in {'baseline','fixed','dynamic','agent_review'}:raise HTTPException(422,detail='不支持的工作流')
+    def validate_selection(category,model,mode):
+        if mode not in {'baseline','agent_review'}:raise HTTPException(422,detail='只支持 GPU 单模型检测与 Agent 多步复核')
         if category not in registry() or model not in registry()[category] or model=='label':
             raise HTTPException(422,detail='未注册的产品类别或模型')
         selected=next(m for m in model_health() if m['category']==category and m['model']==model)
         if not selected['available']:raise HTTPException(503,detail=selected['reason'])
         if mode=='agent_review' and not gpu_assets_available(gpu_config()):
             raise HTTPException(503,detail='Agent GPU 服务未配置或模型资产缺失，请准备 PAI 服务或选择单模型检测')
-        if vlm and mode in {'fixed','dynamic'} and not (ROOT/'weights/smolvlm-500m/source.json').is_file():
-            raise HTTPException(503,detail='本地 VLM 权重缺失，请关闭候选解释或准备资产')
 
     async def image_body(file):
         content=bytearray()
@@ -117,10 +114,11 @@ def create_app(state_directory:Path|None=None):
     def health():
         models=model_health()
         gpu=gpu_config()
-        return dict(status='ok',phase='integrated',inference_service=any(m['available'] for m in models),
-                    models=models,device='CPU',precision='FP32',worker_concurrency=1,paid_api=False,
-                    vlm_available=(ROOT/'weights/smolvlm-500m/source.json').is_file(),
-                    agent_review_available=gpu_assets_available(gpu),vlm_backend='vllm' if gpu['enabled'] else 'disabled',
+        available=cuda_available()
+        return dict(status='ok',phase='gpu-only',inference_service=available and any(m['available'] for m in models),
+                    cuda_available=available,
+                    models=models,device='CUDA',precision='FP32',worker_concurrency=1,paid_api=False,
+                    agent_review_available=available and gpu_assets_available(gpu),vlm_backend='vllm' if gpu['enabled'] else 'disabled',
                     weights_present=(ROOT/'weights/resnet18.a1_in1k/model.safetensors').is_file(),
                     dataset_manifest_present=(ROOT/'data/manifests/bottle.json').is_file())
 
@@ -144,12 +142,12 @@ def create_app(state_directory:Path|None=None):
 
     @application.post('/api/tasks',status_code=202)
     async def create_task(request:Request,file:UploadFile=File(...),category:str=Form('bottle'),
-                          model:str=Form('patchcore'),mode:str=Form('dynamic'),vlm:bool=Form(False)):
-        if mode in {'baseline','agent_review'}:vlm=False
-        validate_selection(category,model,mode,vlm)
+                          model:str=Form('patchcore'),mode:str=Form('agent_review')):
         # Stream with an explicit cap; reject before model inference and do not use client paths.
         content,filename=await image_body(file)
-        try:return store(request).create(content,filename,category,model,mode,vlm)
+        validate_selection(category,model,mode)
+        if not cuda_available():raise HTTPException(503,detail='CUDA 不可用；本版本不支持 CPU 推理')
+        try:return store(request).create(content,filename,category,model,mode)
         except OverflowError as error:raise HTTPException(429,detail=str(error))
 
     @application.get('/api/tasks')
@@ -182,8 +180,9 @@ def create_app(state_directory:Path|None=None):
 
     @application.post('/api/batches',status_code=201)
     def create_batch(request:Request,value:BatchRequest):
-        validate_selection(value.category,value.model,value.mode,value.vlm)
-        return store(request).create_batch(value.name,value.category,value.model,value.mode,value.vlm if value.mode in {'fixed','dynamic'} else False)
+        validate_selection(value.category,value.model,value.mode)
+        if not cuda_available():raise HTTPException(503,detail='CUDA 不可用；本版本不支持 CPU 推理')
+        return store(request).create_batch(value.name,value.category,value.model,value.mode)
 
     @application.get('/api/batches')
     def batches(request:Request,limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0)):
@@ -200,7 +199,7 @@ def create_app(state_directory:Path|None=None):
             filename=(file.filename or 'image').replace('\\','/').split('/')[-1][:160]
             store(request).record_upload_error(batch_id,filename,str(error.detail))
             raise
-        try:return store(request).create(content,filename,batch['category'],batch['model'],batch['mode'],bool(batch['vlm']),batch_id)
+        try:return store(request).create(content,filename,batch['category'],batch['model'],batch['mode'],batch_id)
         except ValueError as error:raise HTTPException(409,detail=str(error))
         except OverflowError as error:raise HTTPException(429,detail=str(error))
 

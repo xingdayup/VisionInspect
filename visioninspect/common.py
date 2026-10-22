@@ -40,7 +40,7 @@ def write_json(path: Path, value) -> None:
 
 
 def read_json(path: Path):
-    # Windows can briefly deny a reader while an atomic replacement is in flight.
+    # A filesystem can briefly deny a reader during an atomic replacement.
     # Corrupt JSON and genuine missing files still fail immediately.
     for attempt in range(6):
         try:return json.loads(path.read_text(encoding='utf-8'))
@@ -60,6 +60,8 @@ def configure_environment() -> None:
     os.environ['HF_HUB_OFFLINE'] = '1'
     os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
     os.environ['PYTHONUTF8'] = '1'
+    os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
+    os.environ.setdefault('PYTORCH_NVML_BASED_CUDA_CHECK', '1')
     os.environ['MPLCONFIGDIR'] = str(ROOT / '.cache/matplotlib')
     os.environ['MPLBACKEND'] = 'Agg'
     # Python may have cached its temp directory before environment configuration.
@@ -94,10 +96,10 @@ def load_config(path: Path) -> dict:
     if config.get('schema_version') != 1:
         raise ValueError('Unsupported config schema')
     runtime = config['runtime']
-    if runtime['device'] != 'cpu' or runtime['precision'] != 'float32':
-        raise ValueError('Phase 1 requires CPU / float32')
+    if runtime['device'] != 'cuda' or runtime['precision'] != 'float32':
+        raise ValueError('GPU deployment requires CUDA / float32; CPU fallback is disabled')
     if runtime['batch_size'] != 1 or runtime['num_workers'] != 0:
-        raise ValueError('Phase 1 requires batch_size=1, num_workers=0')
+        raise ValueError('GPU inspection requires batch_size=1, num_workers=0')
     if config['evaluation']['quantile_method'] != 'higher':
         raise ValueError('Calibration must use higher quantile')
     return config

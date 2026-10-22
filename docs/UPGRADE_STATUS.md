@@ -1,49 +1,54 @@
-# v0.4 业务与框架改造记录
+# GPU 版改造与验收记录
 
-更新：2026-10-22。业务定义见 BUSINESS_V1.md，迁移步骤见 MIGRATION_PAI.md。
+更新：2026-10-22。用户确认保留完整产品，并将 PatchCore 迁移到 GPU。业务、架构及服务器操作分别见 [BUSINESS_V1](BUSINESS_V1.md)、[ARCHITECTURE](ARCHITECTURE.md)、[MIGRATION_PAI](MIGRATION_PAI.md)。
 
-## 已实现
+## 已完成的源码改造
 
-- LangGraph `agent_review` 工作流、结构化多图 VLM 客户端、证据绑定、局部/参考选择、重复动作与调用预算控制、最终确定性校验。
-- 独立 vLLM 子进程、父进程存活监管、lease 与空闲 TTL、内存限制、启动和推理分别计时、原始检测证据留存。
-- SQLite 持久批次、逐文件上传错误记录、100 张限制、200 项队列、暂停继续取消、失败重试及原尝试保留、迁移前数据库备份。
-- 工作台批次页面、三层结论、实际 VLM 输入图查看、逐项人工复核、JSON/CSV 导出、CPU/GPU 独立状态。
-- Windows/Linux Agent 哈希锁、PAI 环境预检与隔离安装脚本、Git bundle、独立资产包与安全恢复工具。
+- 保留 React 工作台、FastAPI、SQLite、单图与批次、证据、人工复核、历史、导出、LangGraph 与 vLLM；工作流仅有 `baseline` 和 `agent_review`。
+- PatchCore 的参数、特征、memory bank、近邻计算和异常图计算迁移到 CUDA FP32。无 CUDA 明确失败；图像解码、文件校验与结果保存仍由 CPU 完成。
+- 历史 checkpoint 先在主机内存安全读取，再严格加载到 CUDA；不改模型、预处理、原文件或冻结阈值。报告记录实际设备、checkpoint 原设备和 CUDA 分配器峰值。
+- 保留两个模型进程的独立空闲 TTL、启动/任务超时、进程树内存监管和失败证据。数据库升级到 schema 3，删除旧批次 VLM 开关列前备份，保留任务与复核记录。
+- 删除旧 CPU SmolVLM、fixed/dynamic 工作流、EfficientAD 实现、Windows 专用入口、CPU Docker 配置、重复锁与过期验证脚本。历史源码与实验文档保存在 Git 标签 `pre-gpu-only-20261022`。
+- 统一 Linux GPU 依赖锁、部署入口 `setup_gpu.sh` / `start_gpu.sh`，增加有限时长的真实 GPU 验收入口 `verify_gpu.py`。原数据、权重、校准、划分及用户结果没有物理删除。
 
-## 已验证与实际命令
+## 本机实际执行与结果
+
+以下使用已有项目开发环境，没有向系统、Conda base 或其他环境安装依赖：
 
 ```powershell
-.\.venv\Scripts\python.exe -B scripts/agent_dependency_budget.py
-.\.venv\Scripts\python.exe -B scripts/run_upgrade_checks.py
-.\.venv\Scripts\python.exe -B scripts/verify_upgrade_cpu.py
+.\.venv\Scripts\python.exe -B -m pytest -q -p no:cacheprovider --junitxml=logs/gpu-cleanup-tests.xml
+npm --prefix frontend run build
+& 'D:\SOFTWARE\Git\Git\bin\bash.exe' -n scripts/setup_gpu.sh
+& 'D:\SOFTWARE\Git\Git\bin\bash.exe' -n scripts/start_gpu.sh
+.\.venv\Scripts\python.exe -B scripts/check_git_content.py
 ```
 
-- 改造前 86 项测试通过。新增依赖锁解析不改原有版本，新增 22 包，候选 wheel 合计 3,584,414 字节；仅安装到项目 `.venv`。实际安装及前后版本在 logs/agent-install.log、packages-before-agent.txt、packages-after-agent.txt。
-- 截至提交 741ed42 的全量测试记录为 logs/upgrade-checks.json、upgrade-tests.xml；2026-10-22 执行为 130 passed、54 warnings，耗时 57.23 秒，现有 PyTorch/Starlette 弃用及 pytest XML 属性警告如实保留。后续原生检查修复的最新测试见下节。
-- 前端 TypeScript 检查及 Vite 生产构建成功。真实浏览器验证包含批次创建、两张成功上传、一张损坏文件拒绝、真实正常图推理、合成平灰图质量失败、人工记录、汇总更新和 CSV 下载；合成图仅用于工程流程，未作为模型效果数据。
-- 真实正常验证图 002.png 分数 8.26118278503418，114.png 分数 8.778727531433105；迁移前 CPU 分数与热图对比的最大热图差为 0。GPU 不可用时 114.png 转人工并保留证据，重试复用同一 CPU worker；记录在 outputs/20261022-144917-upgrade-cpu-verification-9039ef/verification.json。Windows 短暂文件共享冲突已增加有界读写重试，原失败日志保存在 logs/upgrade-cpu-share-violation.log，重新执行通过。没有重新训练、修改阈值或重跑正式测试集指标。
-- Git bundle 已在全新目录 `.cache/migration-qa/20261022-145340-2bd61878` 克隆并验证，376 个文件恢复成功；完整数据检查与迁移后真实 CPU 验证均退出 0，分数和热图保持一致。六条实际命令、退出码和日志在 logs/migration-verification.json；使用的是现有项目解释器验证 Windows 路径迁移，不冒充 Ubuntu 环境安装。
-- Bash 脚本通过 Git Bash `bash -n` 语法检查；这不等于已在 Ubuntu 安装或运行。
-- 原始交接文档、AGENT.md、checkpoint、校准与原划分不改写。Windows 路径迁移显式启用，并继续核验图像哈希和原清单身份。
+- 工程测试：**126 passed、1 skipped、53 warnings，57.94 秒，退出 0**。日志：`logs/gpu-cleanup-tests.log` / `.xml`。覆盖 API、队列、图像校验、划分与校准、证据门控、LangGraph、TTL、环境隔离、网络重试及数据库迁移。
+- 唯一跳过项需要真实 CUDA，验证参数/输入/memory bank 的设备与 checkpoint 重载。API 和流程测试中的替身只验证工程行为，不构成 GPU 模型运行或效果证据。
+- TypeScript 检查与 Vite 生产构建退出 0。真实浏览器检查工作台、批次及系统页：完整导航保留，仅两种工作流，无 CUDA 明确提示并禁止提交检测；记录在 `logs/gpu-browser-qa.json`，截图为 `logs/gpu-only-ui.png`。临时验收服务已停止。
+- Shell 入口通过 Git Bash 语法检查；不代表已在 Ubuntu 安装或运行。Python 源码语法、文档链接和 Git 私有资产检查另行记录在 `logs/gpu-cleanup-audit.json`。
+- 无重新训练、无重算阈值、无正式测试集评估，也未调用付费 API。
 
-## 提交前补充修复
+## 依赖解析与资源预算
 
-- 复核规则更新为 `agent-review-v1.1`：整体观察必须引用待检原图，正常观察还需引用本轮参考图；拒绝仅凭正常参考图推断待检图正常或异常。
-- 局部观察缺失或相互冲突时，先校验失败再记录该轮，避免同一轮同时出现成功与失败记录。新增 5 项复核回归用例。
-- PAI 安装和启动增加只读项目环境校验：要求本项目独立 `.venv`、Python 3.12、禁用系统包；拒绝链接到其他环境、base/system Python、缺失环境元数据及冲突配置。新增 7 项环境校验用例。
-- 实际执行 `.\.venv\Scripts\python.exe -B scripts/check_project_environment.py`，本机环境通过；两个 PAI shell 脚本通过 Git Bash `bash -n`。上述检查没有安装依赖或修改系统环境，Ubuntu 实际运行仍待验证。
-- 修复前的 5 项失败复现保存在 logs/post-audit-reproduction.log；修复后的全量测试、前端构建和 Git 内容检查均退出 0，完整命令及依赖版本在 logs/upgrade-checks.json。
+实际解析命令使用现有 Python，禁止自动下载解释器：
 
-## PAI 原生检查模块名修复
+```powershell
+$env:UV_CACHE_DIR="$PWD\.cache\uv"
+$env:UV_PYTHON_DOWNLOADS='never'
+uv pip compile requirements.in --python .venv/Scripts/python.exe --python-platform x86_64-manylinux_2_35 --generate-hashes --no-emit-index-url --only-binary :all: --no-binary freia --output-file requirements.txt
+```
 
-- 用户在 PAI 实际执行 `pai_vllm.py check` 后，报告旧模块 `vllm._C` 不存在。核对 vLLM 0.27.1 官方源码，其 CUDA 入口导入 `vllm._C_stable_libtorch`；本项目检查脚本已改用该模块，没有跳过原生检查，也没有安装或升级平台依赖。
-- 新增模拟包结构的回归测试，覆盖旧模块不存在但新版模块可用，以及新版模块缺失、共享库加载失败时仍明确失败；这类本机测试不代表 PAI GPU 原生扩展或模型已通过。
-- 修复前 3 项失败复现见 logs/pai-native-probe-before-fix.log。修复后实际执行 `.\.venv\Scripts\python.exe -B -m pytest -q -p no:cacheprovider --junitxml=logs/pai-native-fix-tests.xml`，退出 0，133 passed、54 warnings，耗时 60.24 秒；日志为 logs/pai-native-fix-tests.log。远端需更新脚本后重新执行原命令并回传输出。
+解析成功，131 个锁定包，日志为 `logs/gpu-requirements-compile.log`。FrEIA 0.2 是唯一经过审查的纯 Python 源码例外（34,270 字节，固定 SHA256），构建后端 setuptools 固定版本；其余包要求兼容 wheel。
 
-## 待验证，不作为已完成成果
+通过官方 PyPI 元数据、Linux CPython 3.12 / x86_64 wheel 标签估算，候选包合计 **2,983,835,068 字节，约 2.98 GB**，超过原 **1.5 GB** 上限。`logs/gpu-dependency-budget.json` 的 `passed: false` 表示预算停止。这个估算在 Windows 执行，不能代表服务器磁盘或原生依赖已验证。本轮没有下载或安装这些 CUDA 分发包。
 
-- PAI 的应用环境安装、vLLM 原生内核与 8B 权重实际加载、多图生成、真实复核分支、GPU TTL 和显存峰值，均需执行 MIGRATION_PAI.md 中的命令并回传日志。
-- 新 Agent 误报/漏报收益需要独立标注数据。已见 bottle 测试集不能用来改提示词或策略，也不能用旧 CPU SmolVLM 对照结果代表新 Qwen 工作流。
-- EfficientAD 完整对照仍缺授权额外图像及批准的计算预算；Docker 仍未完成实际构建运行，PAI 原生运行不依赖 Docker。
+安装脚本保留预算限制；需明确确认新预算后才允许传入更高的 `--download-budget-bytes`。不自动复用系统包、升级 CUDA 或驱动。Qwen 权重另需约 17.54 GB 下载、至少 50 GiB 可用空间，未包含在依赖预算内。两模型同时运行的 A10 显存峰值仍待实测。
 
-模型、数据、环境、缓存、用户结果均排除在 Git 外。Git 记录源码和规范，迁移包单独校验资产；没有创建公共仓库或调用付费 API。
+## 已有远端证据与待验收
+
+用户提供的 PAI 输出已核实：NVIDIA A10、CUDA 13、SM 8.6，torch 2.13.0、torchvision 0.28.0、vLLM 0.27.1、Transformers 5.16.1，原生扩展及模型架构检查 `passed: True`、退出 0。这不能证明应用独立环境、权重加载或生成已完成。
+
+服务器仍需完成：应用环境安装；真实 PatchCore CUDA 分数、热图与重载一致性；Qwen 固定权重加载、双图/三图结构化生成；真实复核分支与两个进程的 TTL；冷启动、延迟、内存和显存峰值。新入口仅使用正常验证图，不调冻结区间，不报告准确率收益；若未触发多步动作，会明确记录 `full_agent_loop_exercised: false`。
+
+历史 CPU 指标不能作为 GPU 验收。Agent 的误报/漏报收益仍需独立标注数据，不能用已见测试图调提示词、阈值或策略。当前交付是 GPU 源码改造与本机工程验证，完整 GPU 运行验收待服务器执行。

@@ -84,7 +84,7 @@ def test_head_size_and_metadata_size_limit(monkeypatch):
     (123,14*1024**3,False),
 ])
 def test_completed_transport_still_enforces_resource_budgets(tmp_path,monkeypatch,wheel_bytes,free_bytes,passed):
-    (tmp_path/'requirements-agent-linux.txt').write_text('example==1.0\n','utf8')
+    (tmp_path/'requirements.txt').write_text('example==1.0\n','utf8')
     monkeypatch.setattr(preflight,'ROOT',tmp_path)
     monkeypatch.setattr(preflight,'sys',SimpleNamespace(platform='linux',version_info=(3,12),
         version=sys.version,executable=sys.executable))

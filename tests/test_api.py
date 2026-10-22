@@ -10,8 +10,8 @@ client=TestClient(app)
 def test_health_is_explicit_about_scope():
     response=client.get('/health')
     assert response.status_code==200
-    assert response.json()['inference_service'] is True
-    assert response.json()['device']=='CPU'
+    assert response.json()['inference_service'] is response.json()['cuda_available']
+    assert response.json()['device']=='CUDA'
 
 
 def test_task_endpoint_never_fakes_a_result():
@@ -23,7 +23,7 @@ def test_metrics_errors_and_schema_inventory():
     assert client.get('/api/runs/no-such-run/metrics').status_code==400
     assert client.get('/api/runs/20261021-000000-evaluate-abcdef/metrics').status_code==404
     schemas=client.get('/api/tools/schemas').json()
-    assert len(schemas)==7
+    assert len(schemas)==6
     assert 'review_evidence' in schemas
     assert all(value['service_implemented'] for value in schemas.values())
 

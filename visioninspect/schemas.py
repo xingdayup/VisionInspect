@@ -29,6 +29,9 @@ class DetectionResult(Contract):
     elapsed_seconds: float = Field(ge=0)
     threshold: FiniteFloat
     evidence: dict[str,str]
+    device: Literal['cuda:0']
+    peak_gpu_allocated_bytes: int = Field(ge=0)
+    checkpoint_origin_device: Literal['cpu','cuda']
 
 
 class ReferenceResult(Contract):
@@ -50,16 +53,6 @@ class RegionResult(Contract):
     anomaly_area_ratio: float = Field(ge=0,le=1)
     total_regions: int = 0
     truncated: bool = False
-
-
-class CandidateResult(Contract):
-    candidate: str = 'unknown'
-    evidence: list[str]
-    uncertain: bool = True
-    available: bool = False
-    backend: str = 'disabled'
-    raw_text: str = ''
-    verified: Literal[False] = False
 
 
 class FinalizeInput(Contract):
@@ -90,6 +83,5 @@ TOOL_CONTRACTS = {
     'detect_anomaly': (ImageInput, DetectionResult),
     'retrieve_normal_reference': (ImageInput, ReferenceResult),
     'analyze_suspicious_region': (RegionInput, RegionResult),
-    'classify_defect_candidate': (ImageInput, CandidateResult),
     'finalize_inspection': (FinalizeInput, FinalResult),
 }

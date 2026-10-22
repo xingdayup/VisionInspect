@@ -4,7 +4,7 @@ from pathlib import Path
 import time
 import numpy as np
 from PIL import Image,ImageOps
-from .common import project_path,read_json,sha256,identity
+from .common import project_path,read_json,sha256,identity,load_config
 from .schemas import TOOL_CONTRACTS
 
 def quality_metrics(image: Image.Image) -> dict:
@@ -19,13 +19,13 @@ class ToolFailure(Exception):
         super().__init__(message)
 
 class ToolKit:
-    def __init__(self,registration:dict,policy:dict,output:Path,vlm=None,cache=None):
+    def __init__(self,registration:dict,policy:dict,output:Path,cache=None):
         self.registration=registration;self.policy=policy;self.output=output
         self.output.mkdir(parents=True,exist_ok=True)
         self.profile=read_json(project_path(registration['profile']))
         if identity({key:value for key,value in self.profile.items() if key!='digest'})!=self.profile['digest']:
             raise ToolFailure('model_missing','校准策略校验失败')
-        self.vlm=vlm;self._detector=None;self._references=None;self.initialization_timings={}
+        self._detector=None;self._references=None;self.initialization_timings={}
         self.cache=cache
         if cache is not None:cache.bind_detector(registration,self.profile)
         self.threshold=self.profile['image_threshold']
@@ -45,7 +45,7 @@ class ToolKit:
             if sha256(checkpoint)!=self.profile['checkpoint_sha256']:
                 raise ToolFailure('model_missing','模型校验值与校准策略不一致')
             verified=time.perf_counter()
-            detector,metadata=Detector.load(checkpoint)
+            detector,metadata=Detector.load(checkpoint,load_config(project_path(self.registration['config'])))
             loaded=time.perf_counter()
             if metadata['manifest_digest']!=self.profile['manifest_digest']:
                 raise ToolFailure('model_missing','模型与参考图索引不一致')
@@ -91,12 +91,15 @@ class ToolKit:
         return dict(valid=not issues,issues=issues,**metrics)
 
     def detect_anomaly(self,request):
+        import torch
         from .artifacts import save_evidence
         array=np.asarray(self.image(request.image_path))
         score,anomaly_map,seconds=self.detector().predict(array)
         evidence=save_evidence(self.output/'evidence','inspection',array,anomaly_map)
         Image.fromarray(array).save(self.output/'evidence/original.png')
-        return dict(score=score,threshold=self.threshold,anomaly_map_path='evidence/inspection.npy',
+        return dict(score=score,threshold=self.threshold,anomaly_map_path='evidence/inspection.npy',device='cuda:0',
+                    peak_gpu_allocated_bytes=torch.cuda.max_memory_allocated(self.detector().device),
+                    checkpoint_origin_device=self.detector().source_device,
                     model_version=self.profile['checkpoint_sha256'][:12],elapsed_seconds=seconds,
                     evidence=dict(original='evidence/original.png',heatmap='evidence/'+evidence['heatmap'],
                                   overlay='evidence/'+evidence['overlay']))
@@ -107,7 +110,7 @@ class ToolKit:
         with torch.inference_mode():
             features=detector.model.feature_extractor(detector.tensor(array))
             vector=torch.cat([features[layer].mean(dim=(2,3)) for layer in detector.config['model']['layers']],dim=1)
-        result=vector[0].numpy().astype(np.float32)
+        result=vector[0].detach().cpu().numpy().astype(np.float32)
         return result/max(float(np.linalg.norm(result)),1e-12)
 
     def retrieve_normal_reference(self,request):
@@ -163,13 +166,6 @@ class ToolKit:
                     evidence_summary=[f"{region['id']}: {region['pixels']} 个高分像素，框 {region['box']}" for region in regions],
                     pixel_threshold=self.profile['pixel_threshold'],anomaly_area_ratio=float(binary.mean()),
                     total_regions=total_regions,truncated=total_regions>len(regions))
-
-    def classify_defect_candidate(self,request):
-        if self.vlm is None:
-            return dict(candidate='unknown',evidence=[],uncertain=True,available=False,backend='disabled',raw_text='',verified=False)
-        reference=self.output/'evidence/reference_1.png'
-        return self.vlm.describe(self.image(request.image_path),self.image(str(reference)) if reference.exists() else None,
-                                 category=request.category,audit_directory=self.output/'vlm_input')
 
     def finalize_inspection(self,request):
         reasons=list(request.errors)

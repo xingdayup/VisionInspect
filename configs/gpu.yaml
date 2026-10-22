@@ -1,5 +1,5 @@
 schema_version: 1
-enabled: false
+enabled: true
 root: /mnt/systemDisk/VisionInspect-GPU
 python: /usr/local/bin/python3
 endpoint: http://127.0.0.1:8001

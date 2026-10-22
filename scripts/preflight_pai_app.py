@@ -2,7 +2,6 @@
 import argparse
 import concurrent.futures
 from http.client import IncompleteRead
-import html.parser
 import json
 import platform
 import re
@@ -50,24 +49,20 @@ def fetch_metadata(url,method='GET'):
 def main(argv=None):
     arguments=argparse.ArgumentParser(description=__doc__)
     arguments.add_argument('--workers',type=int,choices=range(1,5),default=2)
+    arguments.add_argument('--download-budget-bytes',type=int,default=1_500_000_000)
     args=arguments.parse_args(argv)
+    if args.download_budget_bytes<=0:arguments.error('Download budget must be positive')
     if sys.platform!='linux' or sys.version_info[:2]!=(3,12) or platform.machine()!='x86_64':
         raise RuntimeError('PAI application requires Linux x86_64 and existing Python 3.12')
     tags={tag:index for index,tag in enumerate(sys_tags())}
-    class Links(html.parser.HTMLParser):
-        def __init__(self):super().__init__();self.links=[]
-        def handle_starttag(self,tag,attrs):
-            if tag=='a':
-                href=dict(attrs).get('href')
-                if href:self.links.append(href)
     def inspect(item):
         name,version=item;candidates=[]
-        if name in {'torch','torchvision'}:
-            parser=Links();parser.feed(fetch_metadata(f'https://download.pytorch.org/whl/cpu/{name}/').decode())
-            files=[dict(filename=urllib.parse.unquote(url.split('/')[-1].split('#')[0]),url=url) for url in parser.links]
-        else:
-            files=json.loads(fetch_metadata(f'https://pypi.org/pypi/{name}/{version}/json'))['urls']
+        files=json.loads(fetch_metadata(f'https://pypi.org/pypi/{name}/{version}/json'))['urls']
         for file in files:
+            if name=='freia' and version=='0.2' and file.get('packagetype')=='sdist':
+                if file['size']!=34270 or file['digests']['sha256']!='e9f1732b4a238b85b0ad3bc14b279a653a6063d14152028e164b989582026bdc':
+                    raise ValueError('Approved FrEIA source size/hash changed')
+                candidates.append((100_000,file));continue
             if not file['filename'].endswith('.whl'):continue
             parsed=parse_wheel_filename(file['filename'])
             if str(parsed[1])!=version:continue
@@ -78,8 +73,10 @@ def main(argv=None):
         size=file.get('size')
         if size is None:
             size=fetch_metadata(file['url'],method='HEAD')
-        return dict(name=name,version=version,filename=file['filename'],bytes=size,url=file['url'])
-    entries=re.findall(r'^([\w-]+)==([^\s\\]+)',(ROOT/'requirements-agent-linux.txt').read_text(),re.M)
+        return dict(name=name,version=version,filename=file['filename'],bytes=size,url=file['url'],
+                    kind='reviewed_pure_python_source' if name=='freia' else 'wheel')
+    entries=re.findall(r'^([\w-]+)==([^\s\\]+)',(ROOT/'requirements.txt').read_text(),re.M)
+    if any('+cpu' in version for _,version in entries):raise RuntimeError('CPU wheels are forbidden')
     if not entries:raise RuntimeError('No pinned dependencies found; installation stopped')
     print(f'Checking {len(entries)} pinned packages with {args.workers} workers; '
           'network timeout 90s, at most 3 attempts per request',flush=True)
@@ -97,7 +94,7 @@ def main(argv=None):
         pool.shutdown(wait=True,cancel_futures=True)
     files=[results[index] for index in range(len(entries))]
     report=dict(python=sys.version,executable=sys.executable,files=files,download_bytes=sum(f['bytes'] for f in files),
-                limit_bytes=1_500_000_000,free_disk_bytes=shutil.disk_usage(ROOT).free,minimum_free_disk_bytes=15*1024**3,
+                limit_bytes=args.download_budget_bytes,free_disk_bytes=shutil.disk_usage(ROOT).free,minimum_free_disk_bytes=15*1024**3,
                 packages_installed=False)
     report['passed']=report['download_bytes']<=report['limit_bytes'] and report['free_disk_bytes']>=report['minimum_free_disk_bytes']
     (ROOT/'logs').mkdir(exist_ok=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import copy
 from pathlib import Path
 
 import numpy as np
@@ -17,18 +18,29 @@ def setup(config: dict):
     torch.manual_seed(config['runtime']['seed'])
     np.random.seed(config['runtime']['seed'])
     torch.use_deterministic_algorithms(True)
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cudnn.benchmark = False
+
+
+def cuda_device():
+    if not torch.cuda.is_available():
+        raise RuntimeError('CUDA is required for PatchCore; CPU fallback is disabled')
+    return torch.device('cuda:0')
 
 
 class Detector:
     """Drive Anomalib's PatchcoreModel directly: no Trainer, auto-download, or threshold fitting."""
 
     def __init__(self, config: dict, size: int | None = None):
+        self.device = cuda_device()
         from anomalib.models.image.patchcore.torch_model import PatchcoreModel
         self.config = config
+        self.source_device = config['runtime']['device']
         settings = config['model']
         self.size = size or settings['image_size']
         self.model = PatchcoreModel(layers=settings['layers'], backbone=settings['backbone'],
-                                   pre_trained=False, num_neighbors=settings['num_neighbors']).cpu().float()
+                                   pre_trained=False, num_neighbors=settings['num_neighbors']).to(self.device).float()
 
     def load_backbone(self):
         from safetensors.torch import load_file
@@ -48,7 +60,7 @@ class Detector:
     def tensor(self, array: np.ndarray):
         tensor = torch.from_numpy(np.array(array, copy=True)).permute(2, 0, 1).float().div_(255)
         tensor = resize(tensor, [self.size, self.size], interpolation=InterpolationMode.BILINEAR, antialias=True)
-        return normalize(tensor, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]).unsqueeze(0)
+        return normalize(tensor, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]).unsqueeze(0).to(self.device)
 
     def fit(self, root: Path, records: list[dict], progress=None):
         if any(record['split'] != 'train' or record['label'] != 0 for record in records):
@@ -66,10 +78,13 @@ class Detector:
         self.model.eval()
 
     def predict(self, array: np.ndarray):
+        torch.cuda.synchronize(self.device)
+        torch.cuda.reset_peak_memory_stats(self.device)
         start = time.perf_counter()
         self.model.eval()
         with torch.inference_mode():
             output = self.model(self.tensor(array))
+        torch.cuda.synchronize(self.device)
         seconds = time.perf_counter() - start
         score = float(output.pred_score.item())
         anomaly_map = output.anomaly_map.squeeze().cpu().numpy().astype(np.float32)
@@ -82,11 +97,19 @@ class Detector:
                         state_dict=self.model.state_dict(), metadata=metadata), path)
 
     @classmethod
-    def load(cls, path: Path):
+    def load(cls, path: Path, config: dict | None = None):
+        cuda_device()  # Reject unavailable CUDA before reading a potentially large checkpoint.
         checkpoint = torch.load(path, map_location='cpu', weights_only=True)
         if checkpoint['schema_version'] != 1:
             raise ValueError('Unsupported checkpoint schema')
-        detector = cls(checkpoint['config'], checkpoint['size'])
+        runtime_config = copy.deepcopy(config or checkpoint['config'])
+        if runtime_config['model'] != checkpoint['config']['model']:
+            raise ValueError('GPU deployment cannot change frozen model or preprocessing settings')
+        runtime_config['runtime']['device'] = 'cuda'
+        detector = cls(runtime_config, checkpoint['size'])
+        detector.source_device = checkpoint['config']['runtime']['device']
         detector.model.load_state_dict(checkpoint['state_dict'], strict=True)
         detector.model.eval()
+        if detector.model.memory_bank.device.type!='cuda' or any(p.device.type!='cuda' for p in detector.model.parameters()):
+            raise RuntimeError('PatchCore parameters and memory bank must all be on CUDA')
         return detector, checkpoint['metadata']

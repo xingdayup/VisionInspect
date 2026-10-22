@@ -92,7 +92,7 @@ def test_repeated_view_and_call_budget_stop(tmp_path):
     assert report['vlm_calls']==1 and '重复' in ''.join(report['result']['reasons'])
 
 
-def test_transport_retry_is_bounded_and_cpu_evidence_survives(tmp_path):
+def test_transport_retry_is_bounded_and_detection_evidence_survives(tmp_path):
     report,_=run(tmp_path,[ToolFailure('vlm_unavailable','test transport fault',True)]*3)
     assert report['vlm_calls']==2
     assert report['result']['state']=='manual_review'

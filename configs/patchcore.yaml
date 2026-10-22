@@ -20,7 +20,7 @@ model:
   num_neighbors: 9
 runtime:
   seed: 42
-  device: cpu
+  device: cuda
   precision: float32
   threads: 4
   batch_size: 1

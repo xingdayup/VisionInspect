@@ -18,6 +18,8 @@ from .resources import resident_tree_memory, kill_tree
 def gpu_config():
     path=project_path(os.environ.get('VISIONINSPECT_GPU_CONFIG','configs/gpu.yaml'))
     value=yaml.safe_load(path.read_text(encoding='utf8'))
+    if 'VISIONINSPECT_VLLM_PYTHON' in os.environ:value['python']=os.environ['VISIONINSPECT_VLLM_PYTHON']
+    if 'VISIONINSPECT_GPU_ROOT' in os.environ:value['root']=os.environ['VISIONINSPECT_GPU_ROOT']
     if 'VISIONINSPECT_GPU_ENABLED' in os.environ:
         value['enabled']=os.environ['VISIONINSPECT_GPU_ENABLED']=='1'
     if value.get('schema_version')!=1 or value['endpoint']!='http://127.0.0.1:8001' or type(value['enabled']) is not bool:

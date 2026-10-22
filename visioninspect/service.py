@@ -12,6 +12,12 @@ from .vllm_runtime import VLLMRuntime,gpu_config
 
 def timestamp():return datetime.now(timezone.utc).isoformat()
 
+def cuda_available():
+    try:
+        import torch
+        return bool(torch.cuda.is_available())
+    except (ImportError,OSError):return False
+
 def registry():
     return yaml.safe_load((ROOT/'configs/models.yaml').read_text(encoding='utf8'))['models']
 
@@ -32,18 +38,20 @@ class TaskStore:
         self.closed=False;self.mutation_lock=threading.RLock();self.wake=threading.Event()
         if self.database.is_file():
             with sqlite3.connect(self.database) as old:
-                if old.execute('PRAGMA user_version').fetchone()[0]<2:
+                if old.execute('PRAGMA user_version').fetchone()[0]<3:
                     backup=self.root/'backups';backup.mkdir(exist_ok=True)
                     with sqlite3.connect(backup/f'history-{time.time_ns()}.sqlite3') as target:old.backup(target)
         with self.connect() as db:
             db.execute('PRAGMA journal_mode=WAL')
             db.execute('CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, created_at TEXT, updated_at TEXT, status TEXT, category TEXT, model TEXT, mode TEXT, filename TEXT, state TEXT, error TEXT, seconds REAL, review TEXT)')
-            db.execute('CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, name TEXT, status TEXT, category TEXT, model TEXT, mode TEXT, vlm INTEGER, created_at TEXT, updated_at TEXT, snapshot TEXT)')
+            db.execute('CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, name TEXT, status TEXT, category TEXT, model TEXT, mode TEXT, created_at TEXT, updated_at TEXT, snapshot TEXT)')
+            if any(row[1]=='vlm' for row in db.execute('PRAGMA table_info(batches)')):
+                db.execute('ALTER TABLE batches DROP COLUMN vlm')
             db.execute('CREATE TABLE IF NOT EXISTS task_links (task_id TEXT PRIMARY KEY, batch_id TEXT, retry_of TEXT, root_task_id TEXT, attempt INTEGER)')
             db.execute('CREATE INDEX IF NOT EXISTS task_queue ON tasks(status,created_at)')
             db.execute('CREATE INDEX IF NOT EXISTS batch_members ON task_links(batch_id)')
             db.execute('CREATE TABLE IF NOT EXISTS batch_upload_errors (batch_id TEXT, filename TEXT, message TEXT, recorded_at TEXT)')
-            db.execute('PRAGMA user_version=2')
+            db.execute('PRAGMA user_version=3')
             interrupted=[row['id'] for row in db.execute("SELECT id FROM tasks WHERE status='running'")]
             db.execute("UPDATE batches SET status='paused',updated_at=? WHERE status IN ('queued','running')",(timestamp(),))
         for task_id in interrupted:self.fail(task_id,'interrupted: 服务中断；请重新提交',None)
@@ -111,7 +119,8 @@ class TaskStore:
         profile=read_json(project_path(registration['profile']))
         return dict(policy=policy,registration=registration,gpu=gpu_config(),profile_digest=profile['digest'])
 
-    def create(self,body,filename,category,model,mode,vlm=False,batch_id=None,retry_of=None):
+    def create(self,body,filename,category,model,mode,batch_id=None,retry_of=None):
+        if mode not in {'baseline','agent_review'}:raise ValueError('Only GPU baseline and agent_review are supported')
         if self.closed:raise RuntimeError('服务正在关闭')
         with self.mutation_lock,self.connect() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -128,7 +137,7 @@ class TaskStore:
                 snapshot=json.loads(batch['snapshot']);status='staged'
             task_id=uuid.uuid4().hex;directory=self.directory(task_id);directory.mkdir()
             (directory/'input.image').write_bytes(body)
-            request=dict(id=task_id,image_path=str(directory/'input.image'),category=category,model=model,mode=mode,vlm=vlm,
+            request=dict(id=task_id,image_path=str(directory/'input.image'),category=category,model=model,mode=mode,
                          filename=filename,created_at=timestamp(),queued_at=timestamp() if status=='queued' else None,
                          snapshot=snapshot or self.snapshot(category,model))
             write_json(directory/'request.json',request)
@@ -166,12 +175,13 @@ class TaskStore:
                     except Exception:pass
             self.wake.wait(.2);self.wake.clear()
 
-    def create_batch(self,name,category,model,mode,vlm=False):
+    def create_batch(self,name,category,model,mode):
+        if mode not in {'baseline','agent_review'}:raise ValueError('Only GPU baseline and agent_review are supported')
         batch_id=uuid.uuid4().hex;now=timestamp()
         snapshot=self.snapshot(category,model)
         with self.connect() as db:
-            db.execute('INSERT INTO batches VALUES (?,?,?,?,?,?,?,?,?,?)',
-                (batch_id,name,'draft',category,model,mode,int(vlm),now,now,json.dumps(snapshot,ensure_ascii=False)))
+            db.execute('INSERT INTO batches VALUES (?,?,?,?,?,?,?,?,?)',
+                (batch_id,name,'draft',category,model,mode,now,now,json.dumps(snapshot,ensure_ascii=False)))
         return self.get_batch(batch_id)
 
     def get_batch(self,batch_id,details=True):
@@ -247,7 +257,7 @@ class TaskStore:
             if existing:raise ValueError('此任务已有未结束的重试')
             request=read_json(self.directory(task_id)/'request.json')
             return self.create((self.directory(task_id)/'input.image').read_bytes(),task['filename'],task['category'],task['model'],task['mode'],
-                request.get('vlm',False),task.get('batch_id'),task_id)
+                task.get('batch_id'),task_id)
 
     def update(self,task_id,**values):
         values['updated_at']=timestamp()
@@ -275,7 +285,7 @@ class TaskStore:
                 if baseline.get('profile_digest')==(request.get('snapshot') or {}).get('profile_digest'):
                     from .schemas import DetectionResult
                     DetectionResult.model_validate(baseline['outputs']['detection'])
-                    original=dict(baseline,cpu_stage_preserved=True)
+                    original=dict(baseline,detection_stage_preserved=True)
             except (ValueError,KeyError,TypeError,OSError):pass
         try:progress=read_json(directory/'progress.json')
         except (OSError,ValueError):progress={}

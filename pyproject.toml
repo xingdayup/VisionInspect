@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "visioninspect-agent"
-version = "0.4.0"
-description = "Local CPU visual inspection baseline, bounded Agent and research workstation"
+version = "0.5.0"
+description = "CUDA PatchCore and vLLM evidence-review workstation"
 requires-python = ">=3.12,<3.13"
 
 [tool.setuptools.packages.find]

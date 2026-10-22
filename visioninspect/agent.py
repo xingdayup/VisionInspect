@@ -1,4 +1,4 @@
-"""Bounded conditional workflow. Only deterministic rules produce candidate states."""
+"""Deterministic GPU detection and evidence preparation for the review graph."""
 from __future__ import annotations
 import time
 from datetime import datetime,timezone
@@ -9,7 +9,7 @@ from .tools import ToolFailure
 class InspectionAgent:
     def __init__(self,tools,policy,progress=None):
         self.tools=tools;self.policy=policy;self.progress=progress or (lambda value:None)
-        self.trace=[];self.errors=[];self.started=0;self.vlm_calls=0;self.initialization=None
+        self.trace=[];self.errors=[];self.started=0;self.initialization=None
 
     def prepare_detection(self):
         prepare=getattr(self.tools,'prepare_detector',None)
@@ -50,9 +50,6 @@ class InspectionAgent:
             self.trace.append(item);self.progress(dict(stage=name,trace=self.trace))
             start=time.perf_counter();failure=None
             try:
-                if name=='classify_defect_candidate':
-                    if self.vlm_calls>=self.policy['max_vlm_calls']:raise ToolFailure('budget_exceeded','VLM 调用预算已用尽')
-                    self.vlm_calls+=1
                 result=self.tools.invoke(name,arguments)
                 if time.perf_counter()-start>self.policy['tool_timeout_seconds']:
                     raise ToolFailure('timeout','工具超过耗时上限，结果作废')
@@ -72,8 +69,8 @@ class InspectionAgent:
             self.progress(dict(stage=name,trace=self.trace));return result
         return None
 
-    def run(self,image_path,category,mode='dynamic'):
-        if mode not in {'baseline','fixed','dynamic'}:raise ValueError('Unknown inspection mode')
+    def run(self,image_path,category,mode='agent_review'):
+        if mode not in {'baseline','agent_review'}:raise ValueError('Unknown inspection mode')
         self.started=time.perf_counter();request=dict(image_path=str(image_path),category=category)
         outputs={};quality=self.call('inspect_image_quality',request,'先检查图像是否可可靠解读')
         outputs['quality']=quality;quality_ok=bool(quality and quality['valid'])
@@ -84,24 +81,22 @@ class InspectionAgent:
             outputs['detection']=detection
         if detection:
             score=detection['score'];profile=self.tools.profile
-            ambiguous=profile['review_lower']<=score<=profile['review_upper'] if mode!='baseline' else False
+            ambiguous=profile['review_lower']<=score<=profile['review_upper'] if mode=='agent_review' else False
             evidence=list(detection['evidence'].values())+[detection['anomaly_map_path']]
-            if mode=='fixed' or (mode=='dynamic' and (score>self.tools.threshold or ambiguous)):
+            if score>self.tools.threshold or ambiguous:
                 regions=self.call('analyze_suspicious_region',dict(**request,anomaly_map_path=detection['anomaly_map_path']),
-                                  '按校准像素阈值提取疑似区域' if mode=='dynamic' else '固定流程：提取区域')
+                                  '按校准像素阈值提取疑似区域')
                 outputs['regions']=regions
                 if regions:evidence+=regions['crop_paths']
-                if mode=='dynamic' and score>self.tools.threshold and regions and not regions['crop_paths']:
+                if score>self.tools.threshold and regions and not regions['crop_paths']:
                     conflict=True
-            if mode=='fixed' or (mode=='dynamic' and ambiguous):
-                references=self.call('retrieve_normal_reference',request,'固定流程：正常参考图' if mode=='fixed' else '分数接近阈值，检索正常训练参考图')
+            if ambiguous:
+                references=self.call('retrieve_normal_reference',request,'不确定样本检索正常训练参考图')
                 outputs['references']=references
                 if references:
                     evidence+=references['reference_paths']
-                    if mode=='dynamic' and score<=self.tools.threshold and max(references['similarities'],default=-1)<references['similarity_floor']:
+                    if score<=self.tools.threshold and max(references['similarities'],default=-1)<references['similarity_floor']:
                         conflict=True
-                if self.policy['vlm']['enabled']:
-                    outputs['candidate']=self.call('classify_defect_candidate',request,'固定流程：候选解释' if mode=='fixed' else '不确定样本需要候选可见描述，描述不能改变模型分数')
         arguments=dict(score=detection['score'] if detection else None,threshold=self.tools.threshold,
                        evidence_paths=evidence,errors=list(self.errors),quality_ok=quality_ok,ambiguous=ambiguous,conflict=conflict)
         final=self.call('finalize_inspection',arguments,'按冻结阈值和失败降级规则汇总候选状态',final=True)
@@ -110,7 +105,7 @@ class InspectionAgent:
                               reasons=self.errors or ['结果汇总失败']).model_dump()
         return dict(schema_version=1,category=category,mode=mode,result=final,outputs=outputs,trace=self.trace,
                     errors=self.errors,stop_reason='manual_review_required' if final['state']=='manual_review' else 'rules_complete',
-                    seconds=time.perf_counter()-self.started,tool_calls=len(self.trace),vlm_calls=self.vlm_calls,
+                    seconds=time.perf_counter()-self.started,tool_calls=len(self.trace),vlm_calls=0,
                     monetary_cost=0,currency='USD',policy_version=self.policy['rule_version'],
                     profile_digest=self.tools.profile['digest'],initialization=self.initialization,
                     notice='研究原型候选结果，需要人工复核；不构成工业放行授权。')

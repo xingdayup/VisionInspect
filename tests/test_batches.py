@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from visioninspect.api import create_app
 from visioninspect.service import TaskStore,timestamp
 
+pytestmark=pytest.mark.usefixtures('gpu_service_fixture')
+
 
 def png():
     stream=BytesIO();Image.new('RGB',(256,256),'gray').save(stream,format='PNG');return stream.getvalue()
@@ -104,3 +106,21 @@ def test_wal_safe_migration_backup_and_restart_pause(tmp_path):
         backups=list((tmp_path/'backups').glob('*.sqlite3'));assert len(backups)==1
         with sqlite3.connect(backups[0]) as db:assert db.execute('SELECT COUNT(*) FROM batches').fetchone()[0]==1
     finally:restarted.close()
+
+
+def test_gpu_schema_removes_legacy_vlm_column_after_backup(tmp_path):
+    with sqlite3.connect(tmp_path/'history.sqlite3') as db:
+        db.execute('CREATE TABLE batches (id TEXT PRIMARY KEY,name TEXT,status TEXT,category TEXT,model TEXT,mode TEXT,vlm INTEGER,created_at TEXT,updated_at TEXT,snapshot TEXT)')
+        db.execute('INSERT INTO batches VALUES (?,?,?,?,?,?,?,?,?,?)',
+            ('a'*32,'历史批次','draft','bottle','patchcore','baseline',0,timestamp(),timestamp(),'{}'))
+        db.execute('PRAGMA user_version=2')
+    store=TaskStore(tmp_path)
+    try:
+        with store.connect() as db:
+            assert 'vlm' not in {row[1] for row in db.execute('PRAGMA table_info(batches)')}
+            assert db.execute('PRAGMA user_version').fetchone()[0]==3
+        assert store.get_batch('a'*32)['name']=='历史批次'
+        backup=next((tmp_path/'backups').glob('*.sqlite3'))
+        with sqlite3.connect(backup) as db:
+            assert 'vlm' in {row[1] for row in db.execute('PRAGMA table_info(batches)')}
+    finally:store.close()

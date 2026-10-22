@@ -1,6 +1,6 @@
 """Single resident subprocess with idle expiry and per-task hard supervision."""
 from __future__ import annotations
-import json,math,os,subprocess,threading,time,uuid
+import json,math,subprocess,threading,time,uuid
 from datetime import datetime,timezone
 from pathlib import Path
 import psutil,yaml
@@ -55,8 +55,7 @@ class ResidentWorker:
         self.log=(self.directory/f'worker-{self.generation}.log').open('ab')
         try:
             self.process=subprocess.Popen(self.command,cwd=ROOT,stdin=subprocess.PIPE,stdout=self.log,
-                stderr=subprocess.STDOUT,text=True,encoding='utf8',
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+                stderr=subprocess.STDOUT,text=True,encoding='utf8')
         except BaseException:
             self.log.close();self.log=None;raise
         self._publish(state='running',pid=self.process.pid,inference_pid=None,generation=self.generation,
@@ -69,8 +68,8 @@ class ResidentWorker:
             if process.poll() is None:
                 try:kill_tree(psutil.Process(process.pid))
                 except psutil.NoSuchProcess:pass
-            # A Windows venv launcher can die before its interpreter child. Retain
-            # Process identities sampled earlier so that child is still reclaimed.
+            # Retain sampled child identities so descendants are reaped even if
+            # their parent exits before this supervisor observes the failure.
             for member in self.tracked.values():
                 try:
                     if member.is_running():kill_tree(member)
@@ -145,7 +144,7 @@ class ResidentWorker:
             finally:
                 write_json(directory/'execution.json',dict(command=self.command,seconds=time.monotonic()-started,
                     peak_process_tree_bytes=peak,memory_measurement='sampled process-tree RSS per task',
-                    failure=failure,gpu_memory='not applicable',exit_code=process.returncode if process else None,
+                    failure=failure,gpu_memory='See report.outputs.detection.peak_gpu_allocated_bytes and GPU runtime sampling',exit_code=process.returncode if process else None,
                     worker_resident=True,worker_pid=process.pid if process else None,
                     inference_pid=reply.get('pid') if reply else None,generation=self.generation,
                     process_reused=reused,task_protocol_completed=bool(reply and reply.get('success')),

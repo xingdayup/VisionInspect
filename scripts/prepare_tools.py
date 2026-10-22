@@ -13,6 +13,8 @@ from visioninspect.tools import quality_metrics
 def prepare(category='bottle'):
     registry=yaml.safe_load((ROOT/'configs/models.yaml').read_text(encoding='utf-8'))
     registration=registry['models'][category]['patchcore']
+    if project_path(registration['profile']).exists() or project_path(registration['references']).exists():
+        raise FileExistsError('Frozen profile/index already exist; use new registered paths for a GPU experiment')
     config=load_config(project_path(registration['config']));setup(config)
     fit=project_path(registration['fit_run']);calibration=read_json(fit/'calibration.json')
     detector,metadata=Detector.load(fit/'model.ckpt')
@@ -22,7 +24,7 @@ def prepare(category='bottle'):
     def embedding(array):
         with torch.inference_mode():
             features=detector.model.feature_extractor(detector.tensor(array))
-            vector=torch.cat([features[layer].mean(dim=(2,3)) for layer in config['model']['layers']],dim=1)[0].numpy()
+            vector=torch.cat([features[layer].mean(dim=(2,3)) for layer in config['model']['layers']],dim=1)[0].detach().cpu().numpy()
         return vector/max(float(np.linalg.norm(vector)),1e-12)
     for record in training:
         with Image.open(root/record['path']) as image:vectors.append(embedding(np.asarray(image.convert('RGB'))))
