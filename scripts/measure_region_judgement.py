@@ -107,12 +107,12 @@ def main():
                 dict(**request, anomaly_map_path=detection["anomaly_map_path"]),
             )
             references = toolkit.invoke("retrieve_normal_reference", request)
-            reference = references["reference_paths"][0]
+            reference_paths = references["reference_paths"]
             total_regions = len(found.get("regions") or [])
             for region in (found.get("regions") or [])[: args.regions]:
                 region_id = region["id"]
                 destination = directory / "evidence" / f"measure_{region_id}.png"
-                matched_crop(toolkit, reference, region, destination)
+                matched_crop(toolkit, reference_paths[0], region, destination)
                 images = [
                     dict(id="original", path=directory / "evidence/original.png"),
                     dict(
@@ -120,6 +120,20 @@ def main():
                     ),
                     dict(id=f"matched:{region_id}:1", path=destination),
                 ]
+                pair = None
+                if len(reference_paths) > 1:
+                    # Two references: a real difference should disagree with both.
+                    second = directory / "evidence" / f"measure_{region_id}_b.png"
+                    matched_crop(toolkit, reference_paths[1], region, second)
+                    pair = images + [dict(id=f"matched:{region_id}:2", path=second)]
+                paired = None
+                if pair is not None:
+                    two, _ = client.decide(
+                        context_for(detection, region, pair, [], total_regions),
+                        pair,
+                        directory / "vlm" / region_id / "two_references",
+                    )
+                    paired = [o.finding for o in two.observations]
                 fresh, _ = client.decide(
                     context_for(detection, region, images, [], total_regions),
                     images,
@@ -149,6 +163,7 @@ def main():
                         region=region_id,
                         fresh=[o.finding for o in fresh.observations],
                         anchored=[o.finding for o in anchored.observations],
+                        two_references=paired,
                     )
                 )
                 print("MEASURED", record["path"], region_id, rows[-1], flush=True)
@@ -165,6 +180,12 @@ def main():
         fresh_false_positive_rate=round(fresh_anomaly / total, 4) if total else None,
         anchored_anomaly=anchored_anomaly,
         anchoring_flips=flips,
+        two_reference_anomaly=sum(
+            1
+            for r in rows
+            if r.get("two_references") and "anomaly" in r["two_references"]
+        ),
+        two_reference_regions=sum(1 for r in rows if r.get("two_references")),
         anchoring_flip_rate=round(flips / total, 4) if total else None,
         note="Known-good images only; labels select images, never tune anything",
     )
