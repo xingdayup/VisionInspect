@@ -102,6 +102,27 @@ def score_row(record, baseline, agent, band, threshold):
     return row
 
 
+def by_label(reviewed):
+    """Split review outcomes by ground truth to expose false alarms and misses."""
+    table = {}
+    for row in reviewed:
+        key = "defect" if row["label"] else "good"
+        bucket = table.setdefault(key, dict(reviewed=0, normal=0, anomaly=0, manual=0))
+        bucket["reviewed"] += 1
+        state = row["agent_state"]
+        if state == "normal_candidate":
+            bucket["normal"] += 1
+        elif state == "anomaly_candidate":
+            bucket["anomaly"] += 1
+        else:
+            bucket["manual"] += 1
+    if "good" in table:
+        table["good"]["false_alarms"] = table["good"]["anomaly"]
+    if "defect" in table:
+        table["defect"]["missed"] = table["defect"]["normal"]
+    return table or None
+
+
 def summarize(rows, band):
     """Aggregate states, agreement and review effect without hiding misses."""
 
@@ -165,6 +186,7 @@ def summarize(rows, band):
         rejection_gates=sorted(
             {code for row in reviewed for code in (row.get("gates") or [])}
         ),
+        review_by_label=by_label(reviewed),
         changed_paths=[row["path"] for row in changed],
         label_note="Labels only score the outcome; nothing here tunes a threshold or the band",
     )
@@ -176,6 +198,12 @@ def main():
     parser.add_argument("--model", default="patchcore")
     parser.add_argument("--limit", type=int, default=0, help="First N test images only")
     parser.add_argument("--skip-review", action="store_true", help="Baseline only")
+    parser.add_argument(
+        "--force-review",
+        type=int,
+        default=0,
+        help="Also review N images outside the band (half hardest normals, half hardest defects)",
+    )
     args = parser.parse_args()
 
     configure_environment()
@@ -234,6 +262,33 @@ def main():
             <= band[1]
         ]
         print(f"in review band: {len(candidates)}/{len(records)}", flush=True)
+
+        if args.force_review:
+            # Judgeability is best measured on the hardest cases: the normal parts
+            # that scored highest and the defective ones that scored lowest. This
+            # changes no threshold; it only decides which images get reviewed.
+            scored = [
+                (record, detection_of(baselines[record["path"]]).get("score") or 0.0)
+                for record in records
+                if record["path"] not in {c["path"] for c in candidates}
+            ]
+            good = sorted(
+                (item for item in scored if item[0]["label"] == 0),
+                key=lambda item: item[1],
+                reverse=True,
+            )
+            bad = sorted(
+                (item for item in scored if item[0]["label"] != 0),
+                key=lambda item: item[1],
+            )
+            half = max(1, args.force_review // 2)
+            for record, _ in good[:half] + bad[:half]:
+                candidates.append(record)
+            print(
+                f"forced review on {len(good[:half])} hard normals and "
+                f"{len(bad[:half])} hard defects (total {len(candidates)})",
+                flush=True,
+            )
 
         agents = {}
         if candidates and not args.skip_review:
