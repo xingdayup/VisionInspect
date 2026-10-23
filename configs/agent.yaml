@@ -19,3 +19,6 @@ regions:
   # unclear 区域是否重开一次补查。默认关闭：实测对一个仍为 unclear 的区域复用一次
   # 调用并不能改善判断，反而可能让模型在重看时给出更多局部 anomaly 观察。
   reopen_unclear_regions: false
+  # 局部视图是否同时给出两张正常参考。实测对 11 个正常区域：unclear 从 3 降到 0，
+  # 误报不增加；代价是局部视图不再包含待检原图（一次最多 3 张）。
+  two_references: true

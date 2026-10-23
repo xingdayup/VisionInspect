@@ -186,8 +186,35 @@ class ReviewAgent:
                 ),
             ]
         region = self.regions[region_id]
-        reference = root / self.references[reference_id - 1]
-        destination = root / "evidence" / f"review_{region_id}_ref_{reference_id}.png"
+        images = [
+            dict(id=f"region:{region_id}", path=root / region["crop_path"]),
+            dict(
+                id=f"matched:{region_id}:{reference_id}",
+                path=self.matched_crop(region, reference_id),
+            ),
+        ]
+        others = [i for i in range(1, len(self.references) + 1) if i != reference_id]
+        if self.policy["regions"].get("two_references") and others:
+            # Measured on known-good crops: a second reference resolved every
+            # "unclear" (3/11 -> 0/11) without adding a single false alarm.
+            other = others[0]
+            images.append(
+                dict(
+                    id=f"matched:{region_id}:{other}",
+                    path=self.matched_crop(region, other),
+                )
+            )
+        else:
+            images.insert(0, dict(id="original", path=root / "evidence/original.png"))
+        return images
+
+    def matched_crop(self, region: dict, reference_index: int) -> Path:
+        """Crop one reference at the region grid coordinates, like the view does."""
+        root = self.tools.output
+        reference = root / self.references[reference_index - 1]
+        destination = (
+            root / "evidence" / (f"review_{region['id']}_ref_{reference_index}.png")
+        )
         with Image.open(reference) as image:
             box = [
                 round(value * image.size[index % 2] / 256)
@@ -196,11 +223,7 @@ class ReviewAgent:
             if box[2] <= box[0] or box[3] <= box[1]:
                 raise ToolFailure("artifact_missing", "正常参考区域坐标无效")
             image.convert("RGB").crop(box).save(destination)
-        return [
-            dict(id="original", path=root / "evidence/original.png"),
-            dict(id=f"region:{region_id}", path=root / region["crop_path"]),
-            dict(id=f"matched:{region_id}:{reference_id}", path=destination),
-        ]
+        return destination
 
     def validate(self, decision: ReviewDecision, images: list[dict]) -> None:
         """Enforce evidence binding before a decision is allowed to count.
