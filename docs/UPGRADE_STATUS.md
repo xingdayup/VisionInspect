@@ -291,6 +291,26 @@ PatchCore 只在 `train/good` 上建立 memory bank，训练与校准阶段没�
 
 **归因说明**：两次运行之间只有"上下文不再回灌历史结论"这一处改动（另修正了上一跑因残留 vLLM 进程占住 8001 导致的失败）。区域级测量给的 45% 翻转率支持这一机制，但两次运行仍是同一批 4 张图，样本很小，不能当作统计结论。
 
+### 剩下的那一张：追问已发出，模型两次都看不清
+
+`good/001` 的最后轨迹（运行 `outputs/20261023-143250-review-comparison-434aac`）：
+
+```
+round 1  global      compare_region  R1 normal
+round 2  region R1   compare_region  R1 normal
+round 3  region R2   compare_region  R2 unclear
+round 4  region R2   finish unknown  R2 unclear   → 触发追问（schema_error 重试）
+round 5  region R2   finish unknown  R2 unclear   → 不再追问，转人工
+```
+
+追问确实发出了，模型在拿到"请针对 R2 给出明确判断"之后仍然写 unclear。这说明该区域对它而言确实是不可判读的，转人工是正确结果，而不是循环缺陷。
+
+当前这批图的最终状态：**3/4 自动给出正确结论，1/4 因真实不可判读转人工，零假阳性。**
+
+### 未完成的测量
+
+把区域级测量扩到 20 张图时，因与对照实验争用同一块 GPU 与 8001 端口，在 8 个区域处中止（此前 11 个区域的数字仍只有参考价值）。**扩大样本的测量仍未完成。**
+
 ### 复核循环的行为矩阵（本机可验证部分）
 
 下列行为由回归测试固定，不依赖 GPU；它们是"循环不再自我阻塞"的证据，**不**代表模型在真实图像上的表现。
