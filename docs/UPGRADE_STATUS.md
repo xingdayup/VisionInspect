@@ -381,3 +381,32 @@ round 5  region R2   finish unknown  R2 unclear   → 不再追问，转人工
 | 可见异常 | `anomaly_candidate` | `test_visible_anomaly_can_finish_as_candidate` |
 | 局部 normal 试图覆盖已记录的异常 | 判为冲突并转人工 | `test_local_normal_cannot_erase_previously_visible_anomaly` |
 | 证据图只有 40×30 | 放大到最短边 256 | `test_small_evidence_crops_are_upscaled_to_the_minimum_side` |
+
+## 2026-10-23 证据视图实验：提高分辨率与叠加热图都被否定
+
+在 AutoDL RTX 4080 SUPER 上跑 2×2，同一批 4 张区间内图、同一 checkpoint 与提示词，只改证据像素。运行目录 `outputs/20261023-203539-*`、`-204038-*`、`-204523-*`、`-205409-*`，日志 `logs/review-resolution-20261023-203535/`。
+
+| 组 | 上限 | 标注 | 自动下结论 | 正确 | 转人工 | 门控 |
+| --- | --- | --- | --- | --- | --- | ---: |
+| A 生产默认 | 512 | 否 | **3/4** | 3 | 1 | `no_final_decision` |
+| D 仅提分辨率 | 1024 | 否 | **3/4** | 3 | 1 | `no_final_decision` |
+| B 仅加标注 | 512 | 是 | 1/4 | 1 | 3 | `anomaly_conflict`, `no_final_decision` |
+| C 两者都加 | 1024 | 是 | 2/4 | 2 | 2 | `anomaly_conflict`, `no_final_decision` |
+
+A 组精确复现了此前记录的 3/4，说明主机与模型状态可比；因此 B、D 的差异来自变量本身。
+
+**结论一：512 → 1024 没有任何效果。** A 与 D 逐图完全一致，调用次数与门控也一致。审计里的 `source_size` 解释了原因：区域裁剪按原图像素切，只有整体视图受上限影响；而整体视图不是瓶颈。四个案例里最小的区域原生只有 39×42 像素，对它来说 1024 与 512 完全相同。
+
+**结论二：把热图和候选框画到证据上是净负改动。** 模型把 `inferno` 的橙黄色读成瓶内壁缺陷，第一轮原话：
+
+- "original 中 R1 区域有**明显污渍和不均匀反光**，reference:1 对应区域无此类污渍"
+- "original 内部有明显**浑浊/沉淀物**，reference:1 内部为均匀深色"
+
+局部裁剪随后显示正常，于是 `anomaly_conflict` 把图推给人工。这是锚定效应在像素通道的重现：文字回灌历史结论翻转了 5/11 个正常区域判断，叠加缺陷色彩则直接**伪造**了一个不存在的缺陷。1024 时危害略小（2/4 对 1/4），因为染色斑块在大画面里相对变小——但这只是减弱，不是消除。
+
+**这两个开关保留、默认关闭**：`VISIONINSPECT_EVIDENCE_SIDE`、`VISIONINSPECT_ANNOTATED_VIEW`，行为由 `scripts/run_review_resolution_experiment.sh` 一次性复跑。
+
+### 下一步的线索
+
+分辨率与热图都不是瓶颈，剩下的线索是**裁剪本身的像素量**：四个案例的局部视图原生尺寸分别是 408×211、77×119、56×53、56×60、39×42 等，最小的那个被插值放大到 256 后仍无从判断，`good/001` 的两次 unclear 就落在它上面。合理的下一步是把裁剪框按最小原生尺寸外扩（当前只有 ±3 格 ≈1.2% 的余量），而不是继续放大发送尺寸或叠加标记。
+

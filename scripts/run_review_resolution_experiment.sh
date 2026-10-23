@@ -6,14 +6,15 @@
 # here waits for the previous one to finish writing its run directory.
 #
 # Arms (only one variable changes per step):
-#   base    512 px cap, plain views      -> must reproduce the recorded 3/4 result
-#   marked  512 px cap, annotated views  -> does pointing at the boxes help?
-#   wide    1024 px cap, annotated views -> is resolution also a bottleneck?
+#   base       512 px cap, plain views      -> must reproduce the recorded 3/4 result
+#   wideplain  1024 px cap, plain views     -> isolates resolution from annotation
+#   marked     512 px cap, annotated views  -> does pointing at the boxes help?
+#   wide       1024 px cap, annotated views -> both changes at once
 #
 # Usage:
 #   bash scripts/run_review_resolution_experiment.sh
 #   FORCE=24 bash scripts/run_review_resolution_experiment.sh   # 24 images per arm
-#   ARMS="base marked" bash scripts/run_review_resolution_experiment.sh
+#   ARMS="base wideplain" bash scripts/run_review_resolution_experiment.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -26,7 +27,7 @@ fi
 : "${VISIONINSPECT_GPU_ROOT:?set VISIONINSPECT_GPU_ROOT or source scripts/env_autodl.sh}"
 PYTHON="${PYTHON:-python3}"
 FORCE="${FORCE:-0}"
-ARMS="${ARMS:-base marked wide}"
+ARMS="${ARMS:-base wideplain marked wide}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 REPORT="logs/review-resolution-$STAMP"
 mkdir -p "$REPORT"
@@ -56,10 +57,11 @@ run_arm() {
 
 for arm in $ARMS; do
   case "$arm" in
-    base)   run_arm base 512 "" ;;
-    marked) run_arm marked 512 "--annotated-view" ;;
-    wide)   run_arm wide 1024 "--annotated-view" ;;
-    *)      echo "unknown arm: $arm" >&2; exit 2 ;;
+    base)      run_arm base 512 "" ;;
+    wideplain) run_arm wideplain 1024 "" ;;
+    marked)    run_arm marked 512 "--annotated-view" ;;
+    wide)      run_arm wide 1024 "--annotated-view" ;;
+    *)         echo "unknown arm: $arm" >&2; exit 2 ;;
   esac
 done
 
@@ -70,7 +72,7 @@ from pathlib import Path
 
 report = Path(sys.argv[1])
 rows = []
-for label in ("base", "marked", "wide"):
+for label in ("base", "wideplain", "marked", "wide"):
     path = report / f"{label}.dir"
     if not path.is_file():
         continue
