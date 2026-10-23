@@ -264,18 +264,30 @@ class ReviewAgent:
         ):
             raise ToolFailure("schema_error", "结束动作不得携带新的工具参数")
 
-    def silent_abstention(self, decision: ReviewDecision) -> bool:
-        """True when the model abstains despite having complete, clean evidence.
+    def pending_question(self, decision: ReviewDecision) -> str | None:
+        """Return one clarifying question when ambiguity is the only blocker.
 
-        Abstention is meant for genuine conflicts or unreadable evidence. Using
-        it after every region came back normal is a default, not a judgement, so
-        the loop asks for the conclusion once before falling back to a human.
+        Two cases qualify: the model abstains although every region came back
+        clean, or a region could only be marked unclear. Both are answered once
+        with a narrower request instead of handing a good part to a human.
         """
-        if decision.verdict != "unknown":
-            return False
-        if any(value != "normal" for value in self.reviewed.values()):
-            return False
-        return all(region in self.reviewed for region in self.regions)
+        if not all(region in self.reviewed for region in self.regions):
+            return None
+        unclear = sorted(
+            r for r, finding in self.reviewed.items() if finding == "unclear"
+        )
+        if unclear and decision.verdict == "normal":
+            return (
+                f"区域 {chr(12289).join(unclear)} 目前为 unclear。"
+                "请只针对这些区域重新比对同名参考裁剪，先给出 normal 或 anomaly 的明确判断，再 finish。"
+            )
+        clean = all(value == "normal" for value in self.reviewed.values())
+        if decision.verdict == "unknown" and clean:
+            return (
+                "全部疑似区域均已比对且未见异常。请直接给出 verdict=normal "
+                "或 verdict=anomaly 的 finish 结论，不要再用 unknown。"
+            )
+        return None
 
     def decide(self, state: ReviewState) -> dict[str, str]:
         """Ask the model for one bounded next step, then validate the reply."""
@@ -344,19 +356,19 @@ class ReviewAgent:
                 ]
                 self.reviewed[self.current[1]] = findings[0]
             if decision.action == "finish":
-                if self.silent_abstention(decision):
-                    # Every region was checked and nothing abnormal was seen, yet
-                    # the model still abstains. Ask once, in the context, for the
-                    # conclusion it is already holding.
-                    self.pending_nudge = (
-                        "全部疑似区域均已比对且未见异常。请直接给出 verdict=normal "
-                        "或 verdict=anomaly 的 finish 结论，不要再用 unknown。"
-                    )
-                    raise ToolFailure(
-                        "schema_error",
-                        "已查看全部区域且无异常观察，请给出 normal 或 anomaly 结论",
-                        retryable=True,
-                    )
+                question = self.pending_question(decision)
+                if question and self.retry_count < 1 and self.calls < self.maximum:
+                    self.pending_nudge = question
+                    # Re-open the regions the question is about, otherwise the
+                    # model would trigger the duplicate-view guard instead of
+                    # looking at them again.
+                    unclear = {
+                        r
+                        for r, finding in self.reviewed.items()
+                        if finding == "unclear"
+                    }
+                    self.visited = {v for v in self.visited if v[1] not in unclear}
+                    raise ToolFailure("schema_error", question, retryable=True)
                 return dict(route="finish")
             if self.calls >= self.maximum:
                 self.failure = "模型调用预算耗尽，补充检查未完成"

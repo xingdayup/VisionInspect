@@ -402,3 +402,26 @@ def test_corrections_share_one_bounded_pool(tmp_path):
     assert report["vlm_calls"] == 3
     assert report["result"]["state"] == "manual_review"
     assert report["agent_review"]["gates"]
+
+
+def test_unclear_region_reopens_for_one_targeted_recheck(tmp_path):
+    """An unclear region is re-opened once instead of handing the part to a human."""
+    report, client = run(
+        tmp_path,
+        [
+            decision("compare_region", "unknown", "R1", 1),
+            decision("compare_region", "unknown", "R2", 1, local=True),
+            decision(
+                "finish", "normal", local=True, observed_region="R2", finding="unclear"
+            ),
+            # The re-opened view is requested again, which used to be a duplicate.
+            decision(
+                "compare_region", "unknown", "R2", 1, local=True, observed_region="R2"
+            ),
+            decision(local=True, observed_region="R2"),
+        ],
+        regions=2,
+    )
+    assert report["result"]["state"] == "normal_candidate"
+    assert report["agent_review"]["accepted"] is True
+    assert "R2" in client.inputs[3][0]["abstention_nudge"]
