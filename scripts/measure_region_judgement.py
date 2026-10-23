@@ -30,7 +30,6 @@ from visioninspect.common import (
     load_config,
     offline,
     project_path,
-    read_json,
     write_json,
 )
 from visioninspect.data import load_manifest
