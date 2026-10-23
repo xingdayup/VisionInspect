@@ -467,3 +467,20 @@ def test_abstaining_because_a_region_is_unclear_gets_one_question(tmp_path):
     assert report["vlm_calls"] == 3
     assert report["result"]["state"] == "normal_candidate"
     assert "unclear" in client.inputs[2][0]["abstention_nudge"]
+
+
+def test_band_bypass_is_opt_in_and_off_by_default(tmp_path, monkeypatch):
+    """Hard-case measurement needs a switch; production must never pay for it."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    monkeypatch.delenv("VISIONINSPECT_REVIEW_FORCE", raising=False)
+    report, _ = run(plain, [decision()], score=20)
+    assert report["review_eligible"] is False
+    assert report["vlm_calls"] == 0
+
+    forced_dir = tmp_path / "forced"
+    forced_dir.mkdir()
+    monkeypatch.setenv("VISIONINSPECT_REVIEW_FORCE", "1")
+    forced, _ = run(forced_dir, [decision()], score=20)
+    assert forced["review_eligible"] is True
+    assert forced["vlm_calls"] == 1

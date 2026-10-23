@@ -11,6 +11,7 @@ gates, so a confident-sounding model cannot promote a candidate on its own.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -140,6 +141,10 @@ class ReviewAgent:
             <= detection["score"]
             <= self.tools.profile["review_upper"]
         )
+        # Experiment-only switch: review regardless of the band so judgeability
+        # can be measured on hard cases. Production never sets this.
+        forced = os.environ.get("VISIONINSPECT_REVIEW_FORCE") == "1"
+        eligible = bool(detection) and (eligible or forced)
         initial = dict(self.report["result"])
         if detection and not self.report["errors"]:
             initial = FinalResult(

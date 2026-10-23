@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -187,6 +188,13 @@ class InspectionAgent:
                 if mode == "agent_review"
                 else False
             )
+            # Experiment-only: review hard cases outside the band so judgeability
+            # can be measured. Production never sets this variable.
+            if (
+                mode == "agent_review"
+                and os.environ.get("VISIONINSPECT_REVIEW_FORCE") == "1"
+            ):
+                ambiguous = True
             evidence = list(detection["evidence"].values()) + [
                 detection["anomaly_map_path"]
             ]
