@@ -452,3 +452,18 @@ def test_context_carries_ids_not_prior_verdicts(tmp_path):
     third = client.inputs[2][0]
     assert third["reviewed_regions"] == ["R1"]
     assert "previous_observations" not in third
+
+
+def test_abstaining_because_a_region_is_unclear_gets_one_question(tmp_path):
+    """unknown + unclear is answerable from the current view, so ask once."""
+    report, client = run(
+        tmp_path,
+        [
+            decision("compare_region", "unknown", "R1", 1),
+            decision("finish", "unknown", local=True, finding="unclear"),
+            decision("finish", "normal", local=True),
+        ],
+    )
+    assert report["vlm_calls"] == 3
+    assert report["result"]["state"] == "normal_candidate"
+    assert "unclear" in client.inputs[2][0]["abstention_nudge"]

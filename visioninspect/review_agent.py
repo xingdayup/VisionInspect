@@ -276,11 +276,17 @@ class ReviewAgent:
         unclear = sorted(
             r for r, finding in self.reviewed.items() if finding == "unclear"
         )
-        if not self.policy["regions"].get("reopen_unclear_regions", False):
-            # Measured: spending a call to re-look at an unclear region did not
-            # resolve it and produced more local anomaly claims. Opt-in only.
-            unclear = []
-        if unclear and decision.verdict == "normal":
+        if unclear and decision.verdict == "unknown":
+            # Abstaining because one region was unreadable is the one case where
+            # the model is asking a question it can answer itself: the view is
+            # still on that region, so it only has to commit to a judgment.
+            return (
+                f"区域 {chr(12289).join(unclear)} 目前为 unclear。"
+                "请只针对该区域给出 normal 或 anomaly 的明确判断，"
+                "并在同一次回答里给出相应的 finish 结论。"
+            )
+        reopen = self.policy["regions"].get("reopen_unclear_regions", False)
+        if unclear and decision.verdict == "normal" and reopen:
             return (
                 f"区域 {chr(12289).join(unclear)} 目前为 unclear。"
                 "请只针对这些区域重新比对同名参考裁剪，先给出 normal 或 anomaly 的明确判断，再 finish。"
