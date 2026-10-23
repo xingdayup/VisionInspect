@@ -138,8 +138,9 @@ Git 不含 `data/`、`weights/`、`outputs/`、`logs/`、环境、缓存或 `fro
 - `data/manifests/bottle.json`：固定文件校验和划分，训练 168、正常验证 41，测试 83；测试不能用于调提示词、阈值或策略。
 - `data/mvtec_ad/source.json`：数据来源记录。
 - `weights/resnet18.a1_in1k/`：46,807,446 字节的骨干 safetensors 及来源记录。
-- `outputs/20261021-232056-fit-ae72d8/`：历史 checkpoint 与校准；该目录被 `configs/models.yaml` 引用。
-- `weights/profiles/bottle.json`、`bottle-references.npz`：冻结策略与正常训练参考索引。
+- ~~`outputs/20261021-232056-fit-ae72d8/`：历史 checkpoint 与校准；该目录被 `configs/models.yaml` 引用。~~
+- ~~`weights/profiles/bottle.json`、`bottle-references.npz`：冻结策略与正常训练参考索引。~~
+  > 以上两项已删除（2026-10-23）：注册在 `7617017` 已切到 GPU 资产，CPU 版本只作历史对照，现从本机移除。
 - `frontend/dist/`：服务器没有 Node/npm，当前已恢复构建产物；若改前端，需在开发机重新构建后迁移。
 - 历史实验和验收所需的 `outputs/`、`logs/`：当前迁移包未等价包含本机全部历史结果或用户检测历史，应按交接需要另行保留。
 

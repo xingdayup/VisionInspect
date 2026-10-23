@@ -382,6 +382,19 @@ round 5  region R2   finish unknown  R2 unclear   → 不再追问，转人工
 | 局部 normal 试图覆盖已记录的异常 | 判为冲突并转人工 | `test_local_normal_cannot_erase_previously_visible_anomaly` |
 | 证据图只有 40×30 | 放大到最短边 256 | `test_small_evidence_crops_are_upscaled_to_the_minimum_side` |
 
+## 2026-10-23 更正与清理：冻结资产早已切到 GPU 版本
+
+本文前面「仍未完成」一节写的「冻结资产仍是 CPU 时代的 checkpoint……尚未替换注册」**已过时**。提交 `7617017` 就把 `configs/models.yaml` 换成了 GPU 拟合的资产，当前注册值以该文件与 `weights/profiles/bottle-gpu-20261022.json` 为准：
+
+| 项 | 当前注册（GPU） | CPU 版本（历史） |
+| --- | --- | --- |
+| checkpoint sha256 | `6d65834f…` | `4a4d94f1…` |
+| image threshold | 8.9894 | 8.7430 |
+| 复核区间 | [8.8237, 9.6100] | [8.4925, 9.4523] |
+| 参考相似度下限 | 0.99 | 0.99939 |
+
+2026-10-23 本机清理删除了 CPU 时代的 checkpoint（`outputs/20261021-232056-fit-ae72d8/`）与 `weights/profiles/bottle*.json`、`bottle-references.npz`，并同步把 `scripts/package_migration.py` 的必需资产改成 GPU 三件。回退对照需要时从 Git 标签 `pre-gpu-only-20261022` 重建，不在本机保留副本。
+
 ## 2026-10-23 证据视图实验：提高分辨率与叠加热图都被否定
 
 在 AutoDL RTX 4080 SUPER 上跑 2×2，同一批 4 张区间内图、同一 checkpoint 与提示词，只改证据像素。运行目录 `outputs/20261023-203539-*`、`-204038-*`、`-204523-*`、`-205409-*`，日志 `logs/review-resolution-20261023-203535/`。

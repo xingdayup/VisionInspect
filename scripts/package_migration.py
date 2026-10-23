@@ -40,11 +40,11 @@ def main():
     roots = [
         "data/mvtec_ad/bottle",
         "data/manifests/bottle.json",
-        "weights/profiles/bottle.json",
-        "weights/profiles/bottle-references.npz",
+        "weights/profiles/bottle-gpu-20261022.json",
+        "weights/profiles/bottle-gpu-20261022-references.npz",
         "weights/resnet18.a1_in1k",
-        "outputs/20261021-232056-fit-ae72d8/model.ckpt",
-        "outputs/20261021-232056-fit-ae72d8/calibration.json",
+        "outputs/20261022-232712-fit-e0b23e/model.ckpt",
+        "outputs/20261022-232712-fit-e0b23e/calibration.json",
         "frontend/dist",
     ]
     files = []
