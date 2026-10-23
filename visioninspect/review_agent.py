@@ -324,16 +324,16 @@ class ReviewAgent:
                     for r in self.regions.values()
                 ],
                 reference_ids=list(range(1, len(self.references) + 1)),
-                reviewed_regions=self.reviewed,
-                # Spell the coverage out: the model should not have to infer the
-                # remaining work from a list, which is where it kept going wrong.
+                # Only the ids are shared. Feeding earlier verdicts back anchors
+                # the model: measured on known-good crops, a prior "anomaly" claim
+                # flipped 5 of 11 independent judgments (45%), while the isolated
+                # false-positive rate was 9%. Coverage is what the model needs;
+                # its previous conclusions are for the report, not the prompt.
+                reviewed_regions=sorted(self.reviewed),
                 remaining_regions=[i for i in self.regions if i not in self.reviewed],
                 coverage=f"{len(self.reviewed)}/{len(self.regions)}"
                 if self.regions
                 else "0/0",
-                previous_observations=[
-                    o for item in self.rounds for o in item.get("observations", [])
-                ],
                 calls_remaining_after_this=self.maximum - self.calls,
                 # ReCoVERR (arXiv:2402.15610): an abstention is better spent on a
                 # narrower question than on handing the case to a human.

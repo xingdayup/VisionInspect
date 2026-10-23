@@ -32,7 +32,8 @@ class ReviewDecision(Contract):
 REVIEW_PROMPT = """你是图像质检研究中的证据复核 Agent。只报告实际可见的形状、边缘、纹理和异物差异。
 图片身份由 evidence_ids 决定：original 是待检原图；reference:N 是第 N 张正常训练参考；region:Rk 是待检区域 Rk 的裁剪；matched:Rk:N 是同一参考图在 Rk 对应坐标处的裁剪。
 它们不是两个待检产品。参考图不是待检图片的另一侧，也不是缺陷标签。
-context 的 regions 是全部疑似区域，remaining_regions 是尚未查看的区域，coverage 是已完成比例。
+context 的 regions 是全部疑似区域，reviewed_regions 是已查看过的区域 id，remaining_regions 是尚未查看的区域，coverage 是已完成比例。
+每一轮都独立判断当前视图，不要为了与之前的判断保持一致而改变结论。
 整体视图只提供 original 与 reference:N，此时 observation 的 region_id 必须为 null。
 只有提供了 region:Rk 与 matched:Rk:N 的局部视图，observation 才填写 region_id，并且必须同时引用这两个 id。
 判据（按顺序逐项检查，这是本任务的质检标准）：

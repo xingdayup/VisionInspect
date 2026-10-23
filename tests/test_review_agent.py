@@ -436,3 +436,19 @@ def test_unclear_region_reopens_for_one_targeted_recheck(tmp_path):
     assert report["result"]["state"] == "normal_candidate"
     assert report["agent_review"]["accepted"] is True
     assert "R2" in client.inputs[3][0]["abstention_nudge"]
+
+
+def test_context_carries_ids_not_prior_verdicts(tmp_path):
+    """Prior conclusions stay out of the prompt: they anchor the next judgement."""
+    _, client = run(
+        tmp_path,
+        [
+            decision("compare_region", "unknown", "R1", 1),
+            decision("compare_region", "unknown", "R2", 1, local=True),
+            decision(local=True),
+        ],
+        regions=2,
+    )
+    third = client.inputs[2][0]
+    assert third["reviewed_regions"] == ["R1"]
+    assert "previous_observations" not in third
