@@ -21,6 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import yaml
 from PIL import Image
 
 from visioninspect.agent import InspectionAgent
@@ -95,7 +96,7 @@ def main():
     configure_environment()
     registration = registry()[args.category]["patchcore"]
     config = load_config(project_path(registration["config"]))
-    policy = read_json(ROOT / "configs/agent.yaml")
+    policy = yaml.safe_load((ROOT / "configs/agent.yaml").read_text("utf8"))
     _, records = load_manifest(config, ("test",))
     good = [r for r in records if r["label"] == 0][: args.images]
     root = project_path(config["dataset"]["root"])
