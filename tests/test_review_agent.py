@@ -1,5 +1,7 @@
 """Explicit synthetic protocol fixtures; these tests measure no model accuracy."""
 
+import copy
+
 import pytest
 import yaml
 from PIL import Image
@@ -118,8 +120,16 @@ class FixtureClient:
         return value, dict(seconds=0.001, usage={})
 
 
-def run(tmp_path, outputs, score=10, regions=1):
+def run(tmp_path, outputs, score=10, regions=1, policy=None):
     tools = FixtureTools(tmp_path, score, regions)
+    if policy:
+        merged = copy.deepcopy(tools.policy)
+        for key, value in policy.items():
+            if isinstance(value, dict):
+                merged.setdefault(key, {}).update(value)
+            else:
+                merged[key] = value
+        tools.policy = merged
     client = FixtureClient(outputs)
     report = ReviewAgent(tools, tools.policy, client).run("fixture.png", "bottle")
     return report, client
@@ -405,10 +415,11 @@ def test_corrections_share_one_bounded_pool(tmp_path):
 
 
 def test_unclear_region_reopens_for_one_targeted_recheck(tmp_path):
-    """An unclear region is re-opened once instead of handing the part to a human."""
+    """With the opt-in enabled, an unclear region is re-opened exactly once."""
     report, client = run(
         tmp_path,
-        [
+        policy={"regions": {"reopen_unclear_regions": True}},
+        outputs=[
             decision("compare_region", "unknown", "R1", 1),
             decision("compare_region", "unknown", "R2", 1, local=True),
             decision(

@@ -16,3 +16,6 @@ regions:
   # false：正常件纹理噪声常产生 >4 个连通区，若一律禁止，越"正常"的图越判不了；
   # 报告仍保留 truncated 标记，人工可按需抽检。
   block_normal_when_truncated: false
+  # unclear 区域是否重开一次补查。默认关闭：实测对一个仍为 unclear 的区域复用一次
+  # 调用并不能改善判断，反而可能让模型在重看时给出更多局部 anomaly 观察。
+  reopen_unclear_regions: false

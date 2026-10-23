@@ -276,6 +276,10 @@ class ReviewAgent:
         unclear = sorted(
             r for r, finding in self.reviewed.items() if finding == "unclear"
         )
+        if not self.policy["regions"].get("reopen_unclear_regions", False):
+            # Measured: spending a call to re-look at an unclear region did not
+            # resolve it and produced more local anomaly claims. Opt-in only.
+            unclear = []
         if unclear and decision.verdict == "normal":
             return (
                 f"区域 {chr(12289).join(unclear)} 目前为 unclear。"

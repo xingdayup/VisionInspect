@@ -241,6 +241,25 @@ PatchCore 只在 `train/good` 上建立 memory bank，训练与校准阶段没�
 
 **仍未解决**：模型自相矛盾。3 张失败里 2 张属于此类。是否要再追问一次（可能把本已判对的正常图推成 anomaly），还是维持转人工，属于产品取舍，未擅自改动。
 
+### 尝试"unclear 补查"及其结果（运行 `outputs/20261023-134905-review-comparison-4168fe`）
+
+对 unclear 区域重开一次补查后重跑同一批：
+
+| 图 | 局部观察 | 结论 |
+| --- | --- | --- |
+| good/001 | R1=anomaly, R2=unclear | manual（`model_failure`） |
+| good/006 | R1/R2/R4 normal, R3 仍 unclear | manual |
+| good/015 | **R1–R4 全部 anomaly** | `anomaly_candidate`（**假阳性**，该图分数 8.888、基线判对） |
+| good/019 | R1–R3 anomaly, R4 normal | manual（`anomaly_conflict`） |
+
+结论：补查没有解决 unclear（006 补到 6 次调用仍为 unclear），且这一轮模型把正常图的局部区域大面积标成 anomaly。上一轮同一批图里 019 被判回 normal，这一轮变成 manual——**同样的图、同样的模型，区域级判断在不同轮次间不稳定**。
+
+因此该能力改为可配置并**默认关闭**（`regions.reopen_unclear_regions: false`），保留代码路径以便在更好的模型上重新评估。
+
+**注意**：两次运行之间上下文结构有变化，不是受控 A/B，不能据此断言"补查导致变差"；能确定的只是它没有带来改善，而区域级判断的方差很大。
+
+**当前瓶颈**：不再是循环或门控，而是 VLM 对正常图局部裁剪的假阳性与不一致。
+
 ### 复核循环的行为矩阵（本机可验证部分）
 
 下列行为由回归测试固定，不依赖 GPU；它们是"循环不再自我阻塞"的证据，**不**代表模型在真实图像上的表现。
