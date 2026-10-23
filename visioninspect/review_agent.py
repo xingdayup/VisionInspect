@@ -39,6 +39,7 @@ GATE_CODES = {
     "复核证据不足，Agent 未给出可接受的结论": "no_final_decision",
     "异常结论缺少可见异常观察": "anomaly_unobserved",
     "整体异常结论与已检查局部证据冲突": "local_conflict",
+    "检测分数高于复核区间上界，不允许改判为正常": "score_above_band",
 }
 
 
@@ -268,6 +269,19 @@ class ReviewAgent:
             decision.region_id is not None or decision.reference_id is not None
         ):
             raise ToolFailure("schema_error", "结束动作不得携带新的工具参数")
+
+    def normal_allowed_by_score(self) -> bool:
+        """True when the detector's reading is inside the calibrated review band.
+
+        A normal verdict narrows the detector's candidate; that is only defensible
+        where the band was calibrated. Above it, the reviewer must send the case to
+        a human instead of clearing it.
+        """
+        detection = self.report["outputs"].get("detection") or {}
+        score = detection.get("score")
+        if score is None:
+            return False
+        return score <= self.tools.profile["review_upper"]
 
     def pending_question(self, decision: ReviewDecision) -> str | None:
         """Return one clarifying question when ambiguity is the only blocker.
@@ -514,6 +528,11 @@ class ReviewAgent:
                         < self.tools.profile["reference_similarity_floor"]
                     ):
                         reasons.append("正常参考相似度低于冻结策略下限")
+                    if not self.normal_allowed_by_score():
+                        # Measured: outside the calibrated band the reviewer turned
+                        # 6 of 10 subtle defects into "normal". A confident detector
+                        # reading may only be talked down inside that band.
+                        reasons.append("检测分数高于复核区间上界，不允许改判为正常")
                     if not reasons:
                         final_state = "normal_candidate"
                 elif "anomaly" not in all_findings:

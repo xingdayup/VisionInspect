@@ -484,3 +484,18 @@ def test_band_bypass_is_opt_in_and_off_by_default(tmp_path, monkeypatch):
     forced, _ = run(forced_dir, [decision()], score=20)
     assert forced["review_eligible"] is True
     assert forced["vlm_calls"] == 1
+
+
+def test_normal_is_refused_above_the_review_band(tmp_path, monkeypatch):
+    """A confident detector reading may not be cleared by the reviewer."""
+    monkeypatch.setenv("VISIONINSPECT_REVIEW_FORCE", "1")
+    report, _ = run(
+        tmp_path,
+        [
+            decision("compare_region", "unknown", "R1", 1),
+            decision(local=True),
+        ],
+        score=20,
+    )
+    assert report["result"]["state"] == "manual_review"
+    assert "score_above_band" in report["agent_review"]["gates"]
