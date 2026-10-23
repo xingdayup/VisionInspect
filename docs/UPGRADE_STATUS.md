@@ -224,6 +224,23 @@ PatchCore 只在 `train/good` 上建立 memory bank，训练与校准阶段没�
 
 实验脚本的汇总里新增 `rejection_gates`，下次真机跑完可以直接按原因分组，不必再靠通读中文原因去猜是哪条门控拦住的——这轮排查就是靠人工读原因，花了很久。
 
+## 2026-10-23 修复后首次真机验证：从"全阻断"变为"部分可判"
+
+实例恢复后重跑 `experiment_review_comparison.py`（运行目录 `outputs/20261023-133956-review-comparison-cd718c`）。配置：阈值 8.989、区间 [8.824, 9.610]、预算 8、相似度下限 0.99。
+
+| 图 | 调用 | 局部观察 | 最终结论 | 拒绝原因 |
+| --- | ---: | --- | --- | --- |
+| good/001 | 3 | R1=anomaly, R2=normal | normal | `anomaly_conflict`, `region_unreviewed` |
+| good/006 | 5 | R1/R2/R4=normal, R3=unclear | normal | `region_unreviewed` |
+| good/015 | 5 | R1/R2/R3=anomaly, R4=normal | normal | `anomaly_conflict`, `region_unreviewed` |
+| good/019 | 5 | R1–R4 全 normal | normal | 无，**accepted** |
+
+汇总：复核 4 张，1 张给出 `normal_candidate`（正确），3 张转人工；误报落到用户手里的从 2 降到 0（对应两张被转人工）；平均单张复核 42.8 秒、最多 5 次调用。
+
+**与修复前的区别**：此前 4/4 被程序自身阻断（重复视图触发终止、预算不足、相似度噪声）。现在阻断全部来自证据本身——模型在局部标了 anomaly 却给出 normal，或某个区域只能给 unclear。门控在做它该做的事，而不是替程序的缺陷背锅。
+
+**仍未解决**：模型自相矛盾。3 张失败里 2 张属于此类。是否要再追问一次（可能把本已判对的正常图推成 anomaly），还是维持转人工，属于产品取舍，未擅自改动。
+
 ### 复核循环的行为矩阵（本机可验证部分）
 
 下列行为由回归测试固定，不依赖 GPU；它们是"循环不再自我阻塞"的证据，**不**代表模型在真实图像上的表现。
