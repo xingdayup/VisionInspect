@@ -125,7 +125,13 @@ def main():
                     # Two references: a real difference should disagree with both.
                     second = directory / "evidence" / f"measure_{region_id}_b.png"
                     matched_crop(toolkit, reference_paths[1], region, second)
-                    pair = images + [dict(id=f"matched:{region_id}:2", path=second)]
+                    # Three images is the limit: drop the original and compare the
+                    # query crop against both references instead.
+                    pair = [
+                        images[1],
+                        images[2],
+                        dict(id=f"matched:{region_id}:2", path=second),
+                    ]
                 paired = None
                 if pair is not None:
                     two, _ = client.decide(
