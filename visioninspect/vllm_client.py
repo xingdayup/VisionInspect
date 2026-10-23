@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import time
 from pathlib import Path
 
@@ -19,6 +20,33 @@ MAX_RESPONSE_BYTES = 1024**2
 THUMBNAIL_SIDE = 512
 MIN_EVIDENCE_SIDE = 256
 MAX_EVIDENCE_IMAGES = 3
+EVIDENCE_SIDE_ENV = "VISIONINSPECT_EVIDENCE_SIDE"
+MIN_EVIDENCE_CAP = 256
+MAX_EVIDENCE_CAP = 2048
+
+
+def evidence_side() -> int:
+    """Return the send-side cap: 512 unless an experiment overrides it.
+
+    Region crops keep their native pixels, so only views larger than the cap lose
+    detail — the whole-part view and large fault regions. Production never sets
+    the variable; the review-resolution experiment does, so one run can compare
+    two caps on the same images. The value is read per call, not at import, so a
+    reused worker cannot keep a stale cap from an earlier run.
+    """
+    raw = os.environ.get(EVIDENCE_SIDE_ENV)
+    if not raw:
+        return THUMBNAIL_SIDE
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ToolFailure("schema_error", f"{EVIDENCE_SIDE_ENV} 必须是整数") from error
+    if not MIN_EVIDENCE_CAP <= value <= MAX_EVIDENCE_CAP:
+        raise ToolFailure(
+            "schema_error",
+            f"{EVIDENCE_SIDE_ENV} 必须在 {MIN_EVIDENCE_CAP}–{MAX_EVIDENCE_CAP} 之间",
+        )
+    return value
 
 
 def ensure_minimum_side(image: Image.Image, minimum: int) -> Image.Image:
@@ -90,6 +118,7 @@ class VLLMClient:
             raise ToolFailure("vlm_unavailable", self.startup_error)
         if not 1 <= len(images) <= MAX_EVIDENCE_IMAGES:
             raise ToolFailure("schema_error", "VLM 每次需要 1–3 张独立证据图片")
+        side = evidence_side()
         directory.mkdir(parents=True, exist_ok=True)
         content: list[dict] = [
             dict(type="text", text=json.dumps(context, ensure_ascii=False))
@@ -97,10 +126,9 @@ class VLLMClient:
         audit = []
         for index, item in enumerate(images, 1):
             with Image.open(item["path"]) as original:
+                source_size = list(original.size)
                 image = ImageOps.exif_transpose(original).convert("RGB")
-                image.thumbnail(
-                    (THUMBNAIL_SIDE, THUMBNAIL_SIDE), Image.Resampling.LANCZOS
-                )
+                image.thumbnail((side, side), Image.Resampling.LANCZOS)
                 image = ensure_minimum_side(image, MIN_EVIDENCE_SIDE)
                 saved = directory / f"image_{index}.png"
                 image.save(saved)
@@ -120,7 +148,9 @@ class VLLMClient:
                     path=saved.name,
                     sha256=sha256(saved),
                     size=list(image.size),
+                    source_size=source_size,
                     source_sha256=sha256(Path(item["path"])),
+                    evidence_side=side,
                 )
             )
         payload = dict(
@@ -150,6 +180,7 @@ class VLLMClient:
                 temperature=0,
                 seed=42,
                 max_tokens=768,
+                evidence_side=side,
             ),
         )
         started = time.monotonic()

@@ -16,7 +16,13 @@ from scripts.pai_vllm import MODEL, REVISION, validate_source
 from visioninspect.common import offline, read_json, write_json
 from visioninspect.review_contracts import ReviewDecision
 from visioninspect.tools import ToolFailure
-from visioninspect.vllm_client import VLLMClient, ensure_minimum_side, parse_decision
+from visioninspect.vllm_client import (
+    EVIDENCE_SIDE_ENV,
+    VLLMClient,
+    ensure_minimum_side,
+    evidence_side,
+    parse_decision,
+)
 from visioninspect.vllm_runtime import VLLMRuntime, gpu_assets_available, gpu_config
 
 
@@ -281,3 +287,57 @@ def test_small_evidence_crops_are_upscaled_to_the_minimum_side():
 def test_large_evidence_images_are_left_untouched():
     big = Image.new("RGB", (900, 700), (90, 90, 90))
     assert ensure_minimum_side(big, 256) is big
+
+
+def _audited_request(tmp_path, monkeypatch, size):
+    """Send one evidence image through decide() and return its recorded audit."""
+    value = dict(
+        observations=[
+            dict(text="协议测试观察", evidence_ids=["original"], finding="normal")
+        ],
+        action="finish",
+        verdict="normal",
+        summary="协议测试，不是模型结论",
+    )
+    original = httpx.Client
+
+    def client(*args, **kwargs):
+        return original(
+            *args,
+            **kwargs,
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json=dict(
+                        choices=[dict(message=dict(content=json.dumps(value)))]
+                    ),
+                )
+            ),
+        )
+
+    monkeypatch.setattr(httpx, "Client", client)
+    path = tmp_path / "original.png"
+    Image.new("RGB", size, (200, 20, 20)).save(path)
+    VLLMClient(gpu_config()).decide(
+        {"fixture": "unit-test-only"}, [dict(id="original", path=path)], tmp_path / "r1"
+    )
+    return read_json(tmp_path / "r1/request.json")
+
+
+def test_evidence_side_defaults_to_the_production_cap(monkeypatch):
+    monkeypatch.delenv(EVIDENCE_SIDE_ENV, raising=False)
+    assert evidence_side() == 512
+
+
+def test_evidence_cap_widens_large_views_and_records_itself(tmp_path, monkeypatch):
+    monkeypatch.setenv(EVIDENCE_SIDE_ENV, "1024")
+    audit = _audited_request(tmp_path, monkeypatch, (2000, 1200))
+    image = audit["images"][0]
+    assert audit["evidence_side"] == 1024
+    assert image["size"] == [1024, 614] and image["source_size"] == [2000, 1200]
+
+
+def test_evidence_cap_cannot_be_pushed_past_its_bounds(monkeypatch):
+    monkeypatch.setenv(EVIDENCE_SIDE_ENV, "4096")
+    with pytest.raises(ToolFailure, match="必须在"):
+        evidence_side()

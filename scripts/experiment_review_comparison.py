@@ -15,6 +15,7 @@ decision, and no threshold is recomputed here.
 
 import argparse
 import csv
+import os
 import sys
 import time
 from pathlib import Path
@@ -31,7 +32,9 @@ from visioninspect.common import (
     write_json,
 )
 from visioninspect.data import load_manifest
+from visioninspect.review_agent import ANNOTATED_VIEW_ENV
 from visioninspect.service import TaskStore, registry
+from visioninspect.vllm_client import EVIDENCE_SIDE_ENV, evidence_side
 
 TERMINAL = {"completed", "failed"}
 STATE_TO_LABEL = {"normal_candidate": 0, "anomaly_candidate": 1}
@@ -204,7 +207,32 @@ def main():
         default=0,
         help="Also review N images outside the band (half hardest normals, half hardest defects)",
     )
+    parser.add_argument(
+        "--evidence-side",
+        type=int,
+        default=0,
+        help=(
+            "Send-side cap for evidence images (default: production 512). "
+            "Only the cap changes; regions keep their native crop pixels."
+        ),
+    )
+    parser.add_argument(
+        "--annotated-view",
+        action="store_true",
+        help=(
+            "Draw the candidate boxes and the anomaly map onto the two full views. "
+            "Evidence ids and the local-binding contract are unchanged."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.evidence_side:
+        # Experiment-only: production never sets this. Recorded below so the
+        # run is self-describing and two caps can be compared afterwards.
+        os.environ[EVIDENCE_SIDE_ENV] = str(args.evidence_side)
+    cap = evidence_side()
+    if args.annotated_view:
+        os.environ[ANNOTATED_VIEW_ENV] = "1"
 
     configure_environment()
     registration = registry()[args.category][args.model]
@@ -234,6 +262,9 @@ def main():
             review_band=list(band),
             test_images=len(records),
             limit=args.limit or None,
+            evidence_side=cap,
+            evidence_side_default=not bool(args.evidence_side),
+            annotated_view=bool(args.annotated_view),
         ),
     )
 
@@ -241,6 +272,8 @@ def main():
     rows = []
     try:
         print(f"RUN_DIRECTORY={output}", flush=True)
+        print(f"EVIDENCE_SIDE={cap}", flush=True)
+        print(f"ANNOTATED_VIEW={bool(args.annotated_view)}", flush=True)
         print(f"baseline pass over {len(records)} test images", flush=True)
         baselines = {}
         for index, record in enumerate(records, 1):

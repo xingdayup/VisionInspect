@@ -8,6 +8,7 @@ from PIL import Image
 
 from visioninspect.common import ROOT, read_json
 from visioninspect.review_agent import (
+    ANNOTATED_VIEW_ENV,
     ReviewAgent,
     gate_codes,
     truncation_blocks_normal,
@@ -499,3 +500,32 @@ def test_normal_is_refused_above_the_review_band(tmp_path, monkeypatch):
     )
     assert report["result"]["state"] == "manual_review"
     assert "score_above_band" in report["agent_review"]["gates"]
+
+def test_annotated_view_keeps_evidence_ids_and_draws_boxes(tmp_path, monkeypatch):
+    """The experiment changes pixels only; the contract the model cites stays."""
+    tools = FixtureTools(tmp_path, regions=2)
+    agent = ReviewAgent.__new__(ReviewAgent)
+    agent.tools = tools
+    agent.references = ["evidence/reference_1.png", "evidence/reference_2.png"]
+    agent.regions = {
+        r["id"]: dict(
+            id=r["id"], box_grid=r["box_grid"], crop_path=r["crop_path"]
+        )
+        for r in [
+            dict(id="R1", box_grid=[16, 24, 80, 96], crop_path="evidence/region_1.png"),
+            dict(
+                id="R2", box_grid=[100, 120, 160, 200], crop_path="evidence/region_2.png"
+            ),
+        ]
+    }
+    agent.current = ("global", None, 1)
+
+    plain = agent.images()
+    monkeypatch.setenv(ANNOTATED_VIEW_ENV, "1")
+    marked = agent.images()
+
+    assert [item["id"] for item in plain] == ["original", "reference:1"]
+    assert [item["id"] for item in marked] == ["original", "reference:1"]
+    assert marked[0]["path"].name == "view_original.png"
+    assert marked[0]["path"].read_bytes() != plain[0]["path"].read_bytes()
+    assert all(item["path"].is_file() for item in marked)

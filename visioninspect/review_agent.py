@@ -30,6 +30,9 @@ if TYPE_CHECKING:
     from .vllm_client import VLLMClient
 
 
+ANNOTATED_VIEW_ENV = "VISIONINSPECT_ANNOTATED_VIEW"
+
+
 GATE_CODES = {
     "尚有未完成正常局部核查的疑似区域": "region_unreviewed",
     "疑似区域数量超过提取上限": "regions_truncated",
@@ -178,12 +181,20 @@ class ReviewAgent:
         kind, region_id, reference_id = self.current
         root = self.tools.output
         if kind == "global":
+            original = root / "evidence/original.png"
+            reference = root / self.references[reference_id - 1]
+            if os.environ.get(ANNOTATED_VIEW_ENV) == "1":
+                # Experiment-only: draw the candidate boxes (and the anomaly map
+                # on the query) onto the two full views. Ids and the evidence
+                # contract are untouched; only the pixels gain the detector's
+                # localization, so the model picks a region instead of searching.
+                original = self.annotated_view(original, "view_original", heatmap=True)
+                reference = self.annotated_view(
+                    reference, f"view_reference_{reference_id}"
+                )
             return [
-                dict(id="original", path=root / "evidence/original.png"),
-                dict(
-                    id=f"reference:{reference_id}",
-                    path=root / self.references[reference_id - 1],
-                ),
+                dict(id="original", path=original),
+                dict(id=f"reference:{reference_id}", path=reference),
             ]
         region = self.regions[region_id]
         images = [
@@ -207,6 +218,82 @@ class ReviewAgent:
         else:
             images.insert(0, dict(id="original", path=root / "evidence/original.png"))
         return images
+
+    def annotated_view(
+        self, source: Path, name: str, heatmap: bool = False
+    ) -> Path:
+        """Render one full view at send size with the candidate boxes drawn on it.
+
+        Drawn at the exact cap the client will send, so no later downscale can
+        erase the boxes. The heatmap is the query's own anomaly map, so it is
+        only blended onto the query view; drawing it on a normal reference would
+        suggest the reference contains the same anomaly.
+
+        The map is composited through a mask instead of a flat blend: blending
+        the whole frame darkens the part and costs the texture contrast the
+        reviewer needs. Only the hot pixels are tinted, so the rest stays the
+        real product.
+        """
+        from PIL import ImageDraw, ImageOps
+
+        from .vllm_client import evidence_side
+
+        side = evidence_side()
+        with Image.open(source) as opened:
+            view = ImageOps.exif_transpose(opened).convert("RGB")
+        view.thumbnail((side, side), Image.Resampling.LANCZOS)
+        if heatmap:
+            view = self._tint_hot_pixels(view)
+        draw = ImageDraw.Draw(view)
+        font = self._annotation_font(max(12, round(view.width / 32)))
+        for region in self.regions.values():
+            box = [
+                round(value * (view.width if index % 2 == 0 else view.height) / 256)
+                for index, value in enumerate(region["box_grid"])
+            ]
+            draw.rectangle(box, outline=(0, 220, 255), width=3)
+            draw.text((box[0] + 4, box[1] + 3), region["id"], fill=(0, 220, 255), font=font)
+        target = self.tools.output / "evidence" / f"{name}.png"
+        view.save(target)
+        return target
+
+    def _tint_hot_pixels(self, view):
+        """Tint only the high-score pixels, leaving the rest of the part intact."""
+        import numpy as np
+        from PIL import Image
+
+        map_path = self.tools.output / "evidence/inspection.npy"
+        layer_path = self.tools.output / "evidence/inspection_heatmap.png"
+        if not layer_path.is_file():
+            return view
+        with Image.open(layer_path) as opened:
+            layer = opened.convert("RGB").resize(
+                view.size, Image.Resampling.BILINEAR
+            )
+        if map_path.is_file():
+            anomaly = np.load(map_path, allow_pickle=False)
+            low, high = float(anomaly.min()), float(anomaly.max())
+            display = (anomaly - low) / max(high - low, 1e-12)
+        else:
+            with Image.open(layer_path) as opened:
+                display = np.asarray(opened.convert("L"), dtype=np.float32) / 255.0
+        weight = np.clip((display - 0.45) / 0.55, 0.0, 1.0)
+        # Half-strength tint: strong enough to point at the pixels, weak enough
+        # that the defect itself stays visible underneath it.
+        mask = Image.fromarray((weight * 0.55 * 255).astype(np.uint8)).resize(
+            view.size, Image.Resampling.BILINEAR
+        )
+        return Image.composite(layer, view, mask)
+
+    @staticmethod
+    def _annotation_font(size: int):
+        """Use a scalable default font when Pillow provides one."""
+        from PIL import ImageFont
+
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:  # Pillow < 10.1
+            return ImageFont.load_default()
 
     def matched_crop(self, region: dict, reference_index: int) -> Path:
         """Crop one reference at the region grid coordinates, like the view does."""
